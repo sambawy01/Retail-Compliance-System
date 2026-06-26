@@ -1,0 +1,56 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #3a3f4d #0f1115;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: #0f1115;
+}
+*::-webkit-scrollbar-thumb {
+  background: #2a2e3a;
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #3a3f4d;
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+/* RTL support */
+html[dir='rtl'] {
+  direction: rtl;
+}
+
+html[dir='ltr'] {
+  direction: ltr;
+}
+
+/* Utility for forcing RTL/LTR on specific elements */
+.rtl-flip {
+  transform: scaleX(-1);
+}
+
+/* Card hover */
+.card-hover {
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.card-hover:hover {
+  background-color: #1e222c;
+  border-color: #3a3f4d;
+}
+
+/* Gauge animations */
+.gauge-progress {
+  transition: stroke-dashoffset 0.8s ease;
+}

@@ -44,4 +44,5 @@ edge-agent/**/__pycache__/
 edge-agent/*.egg-info/
 
 # Docker
-docker-compose.override.yml
+docker-compose.override.ymlweb/node_modules/
+web/dist/
