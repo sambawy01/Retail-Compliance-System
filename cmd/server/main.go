@@ -22,6 +22,7 @@ import (
 	"github.com/sambawy01/Retail-Compliance-System/internal/event"
 	"github.com/sambawy01/Retail-Compliance-System/internal/identity"
 	"github.com/sambawy01/Retail-Compliance-System/internal/vision"
+	"github.com/sambawy01/Retail-Compliance-System/internal/webrtc"
 	"github.com/sambawy01/Retail-Compliance-System/pkg/database"
 	"github.com/sambawy01/Retail-Compliance-System/pkg/observability"
 )
@@ -93,8 +94,11 @@ func run() error {
 		return fmt.Errorf("auth: JWT keys are required (set JWT_PRIVATE_KEY_B64/JWT_PUBLIC_KEY_B64 or JWT_PRIVATE_KEY_PATH/JWT_PUBLIC_KEY_PATH)")
 	}
 
+	// Create WebRTC signaling server
+	signalingServer := webrtc.New(pool)
+
 	// Create API server + router
-	apiServer := api.NewServer(pool, bus, visionSvc, identitySvc, authSvc, api.APIConfig{
+	apiServer := api.NewServer(pool, bus, visionSvc, identitySvc, authSvc, signalingServer, api.APIConfig{
 		AllowedOrigins: cfg.AllowedOrigins,
 	})
 

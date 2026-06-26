@@ -5,8 +5,10 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -16,6 +18,7 @@ import (
 	"github.com/sambawy01/Retail-Compliance-System/internal/identity"
 	"github.com/sambawy01/Retail-Compliance-System/internal/tenant"
 	"github.com/sambawy01/Retail-Compliance-System/internal/vision"
+	"github.com/sambawy01/Retail-Compliance-System/internal/webrtc"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -26,6 +29,7 @@ type Server struct {
 	vision     *vision.Service
 	identity   *identity.Service
 	auth       *auth.Service
+	signaling  *webrtc.SignalingServer
 	cfg        APIConfig
 }
 
@@ -35,14 +39,15 @@ type APIConfig struct {
 }
 
 // NewServer creates the API server with all dependencies.
-func NewServer(pool *pgxpool.Pool, bus *event.Bus, vs *vision.Service, ids *identity.Service, authSvc *auth.Service, cfg APIConfig) *Server {
+func NewServer(pool *pgxpool.Pool, bus *event.Bus, vs *vision.Service, ids *identity.Service, authSvc *auth.Service, sig *webrtc.SignalingServer, cfg APIConfig) *Server {
 	return &Server{
-		pool:     pool,
-		bus:      bus,
-		vision:   vs,
-		identity: ids,
-		auth:     authSvc,
-		cfg:      cfg,
+		pool:      pool,
+		bus:       bus,
+		vision:    vs,
+		identity:  ids,
+		auth:      authSvc,
+		signaling: sig,
+		cfg:       cfg,
 	}
 }
 
@@ -588,20 +593,96 @@ func (s *Server) listAuditLog(w http.ResponseWriter, r *http.Request) {
 // --- WebRTC handlers ---
 
 func (s *Server) webrtcOffer(w http.ResponseWriter, r *http.Request) {
-	// TODO: implement WebRTC signaling
-	writeError(w, http.StatusNotImplemented, "WebRTC signaling not yet implemented")
+	var body struct {
+		CameraID  string `json:"camera_id"`
+		SDPOffer  string `json:"sdp_offer"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if body.CameraID == "" || body.SDPOffer == "" {
+		writeError(w, http.StatusBadRequest, "camera_id and sdp_offer are required")
+		return
+	}
+	userID, _ := r.Context().Value(userCtxKey{}).(string)
+	sess, err := s.signaling.CreateSession(r.Context(), body.CameraID, userID, body.SDPOffer)
+	if err != nil {
+		slog.Error("webrtc_create_session_failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to create session")
+		return
+	}
+	writeJSON(w, http.StatusCreated, sess)
 }
 
 func (s *Server) webrtcAnswer(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotImplemented, "WebRTC answer not yet implemented")
+	var body struct {
+		SessionID  string `json:"session_id"`
+		SDPAnswer  string `json:"sdp_answer"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if body.SessionID == "" || body.SDPAnswer == "" {
+		writeError(w, http.StatusBadRequest, "session_id and sdp_answer are required")
+		return
+	}
+	if err := s.signaling.SetAnswer(r.Context(), body.SessionID, body.SDPAnswer); err != nil {
+		if errors.Is(err, webrtc.ErrSessionNotFound) {
+			writeError(w, http.StatusNotFound, "session not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to set answer")
+		return
+	}
+	// Return the updated session so the viewer gets the answer
+	sess, err := s.signaling.GetSession(r.Context(), body.SessionID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get session")
+		return
+	}
+	writeJSON(w, http.StatusOK, sess)
 }
 
 func (s *Server) webrtcICE(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotImplemented, "ICE exchange not yet implemented")
+	var body struct {
+		SessionID    string `json:"session_id"`
+		Candidate    string `json:"candidate"`
+		SDPMLineIndex int   `json:"sdp_mline_index"`
+		SDPMid       string `json:"sdp_mid"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if body.SessionID == "" || body.Candidate == "" {
+		writeError(w, http.StatusBadRequest, "session_id and candidate are required")
+		return
+	}
+	if err := s.signaling.AddICECandidate(r.Context(), body.SessionID, webrtc.ICECandidate{
+		Candidate:     body.Candidate,
+		SDPMLineIndex: body.SDPMLineIndex,
+		SDPMid:        body.SDPMid,
+	}); err != nil {
+		if errors.Is(err, webrtc.ErrSessionNotFound) {
+			writeError(w, http.StatusNotFound, "session not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to add ICE candidate")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) getTurnCredentials(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotImplemented, "TURN credentials not yet implemented")
+	// Generate time-limited TURN credentials (24h TTL for pilot)
+	cred, err := s.signaling.GenerateTURNCredential(r.Context(), "", 24*time.Hour)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate TURN credentials")
+		return
+	}
+	writeJSON(w, http.StatusOK, cred)
 }
 
 // --- Notification handlers ---
