@@ -3,89 +3,64 @@ import api from '../services/api'
 
 const AuthContext = createContext(null)
 
-const TK = 'watc' + 'hdog_' + 'token'
-const UK = 'watc' + 'hdog_' + 'user'
-// Sensitive localStorage keys cleared on logout
-const AUTH_KEYS = [TK, UK]
-// PERSIST keys also cleared on logout to prevent webhook secret persistence
-const PERSIST_KEYS = ['watchdog_rules', 'watchdog_org']
-
 export function AuthProvider({ children }) {
-  const [token, setToken] = useState(() => localStorage.getItem(TK))
-  const [user, setUser] = useState(() => {
-    try {
-      const u = localStorage.getItem(UK)
-      return u ? JSON.parse(u) : null
-    } catch {
-      return null
-    }
-  })
-  const [loading, setLoading] = useState(false)
+  const [user, setUser] = useState(null)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const logoutTimer = useRef(null)
 
-  const logout = useCallback(() => {
-    setToken(null)
-    setUser(null)
-    for (const key of [...AUTH_KEYS, ...PERSIST_KEYS]) {
-      localStorage.removeItem(key)
-    }
-    if (logoutTimer.current) {
-      clearTimeout(logoutTimer.current)
-      logoutTimer.current = null
-    }
+  // On mount: check if we have a valid session by calling /me
+  // The httpOnly cookie is sent automatically by axios (withCredentials: true)
+  useEffect(() => {
+    let active = true
+    api.get('/auth/me')
+      .then((res) => {
+        if (active && res.data) {
+          setUser(res.data)
+        }
+      })
+      .catch(() => {
+        // No valid session — user is not authenticated
+        if (active) setUser(null)
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+    return () => { active = false }
   }, [])
 
-  const scheduleAutoLogout = useCallback((tok) => {
-    if (logoutTimer.current) clearTimeout(logoutTimer.current)
+  const logout = useCallback(async () => {
     try {
-      const payload = JSON.parse(atob(tok.split('.')[1]))
-      if (payload && payload.exp) {
-        const ms = payload.exp * 1000 - Date.now() - 5000
-        if (ms > 0) {
-          logoutTimer.current = setTimeout(() => logout(), ms)
-        } else {
-          logout()
-        }
-      }
-    } catch {
-      // Not a valid JWT — set a fallback max-age timer (1 hour)
-      logoutTimer.current = setTimeout(() => logout(), 60 * 60 * 1000)
-    }
-  }, [logout])
-
-  useEffect(() => {
-    if (token) scheduleAutoLogout(token)
-    return () => {
-      if (logoutTimer.current) clearTimeout(logoutTimer.current)
-    }
-  }, [token, scheduleAutoLogout])
+      await api.post('/auth/logout')
+    } catch { /* ignore — cookie may already be expired */ }
+    setUser(null)
+    // Clear any legacy localStorage data
+    localStorage.removeItem('watchdog_token')
+    localStorage.removeItem('watchdog_user')
+    localStorage.removeItem('watchdog_rules')
+    localStorage.removeItem('watchdog_org')
+  }, [])
 
   const login = useCallback(async (email, password) => {
     setLoading(true)
     setError(null)
     try {
       const res = await api.post('/auth/login', { email, password })
-      const tok = res.data.token || res.data.access_token
-      const u = res.data.user || { email }
-      if (!tok) throw new Error('No token returned')
-      setToken(tok)
+      // Token is set as httpOnly cookie by the server — we only get user info back
+      const u = res.data.user
+      if (!u) throw new Error('Login failed')
       setUser(u)
-      localStorage.setItem(TK, tok)
-      localStorage.setItem(UK, JSON.stringify(u))
-      scheduleAutoLogout(tok)
       return true
     } catch (e) {
-      setError(e.response?.data?.message || e.message || 'Login failed')
+      setError(e.response?.data?.error || e.message || 'Login failed')
       return false
     } finally {
       setLoading(false)
     }
-  }, [scheduleAutoLogout])
+  }, [])
 
   const value = useMemo(
-    () => ({ token, user, loading, error, login, logout, isAuthenticated: !!token }),
-    [token, user, loading, error, login, logout]
+    () => ({ user, loading, error, login, logout, isAuthenticated: !!user }),
+    [user, loading, error, login, logout]
   )
 
   return (

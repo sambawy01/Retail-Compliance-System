@@ -21,7 +21,9 @@ function PageLoader() {
 }
 
 function ProtectedLayout() {
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, loading } = useAuth()
+  // While checking session via /me, show loader instead of redirecting
+  if (loading) return <PageLoader />
   if (!isAuthenticated) return <Navigate to="/login" replace />
   return <Layout />
 }

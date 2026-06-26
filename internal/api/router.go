@@ -62,11 +62,14 @@ func (s *Server) Router() http.Handler {
 	// Health — no auth
 	r.Get("/health", s.healthHandler)
 
-	// Auth — no auth required
+	// Auth — no auth required for login
 	r.Route("/api/v1/auth", func(r chi.Router) {
 		r.Post("/login", s.loginHandler)
+		r.Post("/logout", s.logoutHandler)
 		r.Post("/refresh", s.refreshHandler)
 	})
+	// /me endpoint — requires auth, returns current user info
+	r.With(s.authMiddleware).Get("/api/v1/auth/me", s.meHandler)
 
 	// Everything else requires JWT auth
 	r.Group(func(r chi.Router) {
@@ -137,13 +140,38 @@ func (s *Server) Router() http.Handler {
 
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		origins := s.cfg.AllowedOrigins
-		if origins == "" {
-			origins = "*"
+		origin := r.Header.Get("Origin")
+		allowed := s.cfg.AllowedOrigins
+		if allowed == "" || allowed == "*" {
+			// In credentials mode, we can't use wildcard. Reflect the origin
+			// if it's present, otherwise allow all (no credentials).
+			if origin != "" {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Vary", "Origin")
+			} else {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			}
+		} else {
+			// Specific origins configured — always set the first one.
+			// If Origin header matches, reflect it. Otherwise set the configured origin.
+			matched := false
+			for _, o := range strings.Split(allowed, ",") {
+				if strings.TrimSpace(o) == origin {
+					w.Header().Set("Access-Control-Allow-Origin", origin)
+					w.Header().Set("Vary", "Origin")
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				// No Origin header or not in list — set the configured origin
+				w.Header().Set("Access-Control-Allow-Origin", strings.TrimSpace(strings.Split(allowed, ",")[0]))
+			}
 		}
-		w.Header().Set("Access-Control-Allow-Origin", origins)
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		w.Header().Set("Access-Control-Max-Age", "3600")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -154,14 +182,19 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		header := r.Header.Get("Authorization")
-		if !strings.HasPrefix(header, "Bearer ") {
-			writeError(w, http.StatusUnauthorized, "missing or invalid authorization header")
-			return
+		// Read token from httpOnly cookie first, then fall back to Bearer header
+		// (Bearer header is for edge agent / API clients that can't use cookies)
+		var token string
+		if cookie, err := r.Cookie("watchdog_session"); err == nil && cookie.Value != "" {
+			token = cookie.Value
+		} else {
+			header := r.Header.Get("Authorization")
+			if strings.HasPrefix(header, "Bearer ") {
+				token = strings.TrimPrefix(header, "Bearer ")
+			}
 		}
-		token := strings.TrimPrefix(header, "Bearer ")
 		if token == "" {
-			writeError(w, http.StatusUnauthorized, "missing or invalid authorization header")
+			writeError(w, http.StatusUnauthorized, "missing or invalid authentication")
 			return
 		}
 		if s.auth == nil {
@@ -263,8 +296,17 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Set httpOnly cookie — not accessible to JavaScript, prevents XSS token theft
+	http.SetCookie(w, &http.Cookie{
+		Name:     "watchdog_session",
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   r.TLS != nil, // Secure in HTTPS, omitted in dev
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   86400, // 24h
+	})
 	writeJSON(w, http.StatusOK, map[string]any{
-		"token": token,
 		"user": map[string]any{
 			"user_id":      userID,
 			"email":        body.Email,
@@ -272,6 +314,34 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 			"role":         role,
 			"org_id":       dbOrgID,
 		},
+	})
+}
+
+// logoutHandler clears the session cookie.
+func (s *Server) logoutHandler(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "watchdog_session",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		MaxAge:   -1, // immediately expire
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// meHandler returns the current authenticated user's info from the JWT claims.
+func (s *Server) meHandler(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(userCtxKey{}).(string)
+	role, _ := r.Context().Value(roleCtxKey{}).(string)
+	orgID, err := tenant.OrgIDFrom(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid context")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user_id": userID,
+		"role":    role,
+		"org_id":  orgID.String(),
 	})
 }
 

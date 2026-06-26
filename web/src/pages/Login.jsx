@@ -5,7 +5,8 @@ import { useLang } from '../contexts/LanguageContext'
 import { ShieldCheck, Languages, Loader2, Mail, Lock } from 'lucide-react'
 
 export default function Login() {
-  const { login, loading, error, isAuthenticated } = useAuth()
+  const { login, error, isAuthenticated } = useAuth()
+  const [submitting, setSubmitting] = useState(false)
   const { t, toggle, lang } = useLang()
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
@@ -15,7 +16,9 @@ export default function Login() {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    setSubmitting(true)
     const ok = await login(email, password)
+    setSubmitting(false)
     if (ok) navigate('/', { replace: true })
   }
 
@@ -77,7 +80,7 @@ export default function Login() {
 
           <button
             type="submit"
-            disabled={loading}
+            disabled={submitting}
             className="w-full bg-accent hover:bg-accent-hover text-white font-semibold py-2.5 rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
           >
             {loading && <Loader2 size={16} className="animate-spin" />}
