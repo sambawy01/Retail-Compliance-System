@@ -30,6 +30,8 @@ services:
     environment:
       ENV: development
       PORT: "8080"
+      # Connect as watchdog (superuser) but app code should SET ROLE watchdog_app
+      # to ensure RLS policies apply. In production, use a dedicated non-superuser role.
       DATABASE_URL: postgres://watchdog:watchdog_dev@db:5432/watchdog?sslmode=disable
       REDIS_URL: redis://redis:6379
       LOG_LEVEL: debug

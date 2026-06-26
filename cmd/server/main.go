@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -13,7 +14,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/sambawy01/Retail-Compliance-System/internal/alerts"
 	"github.com/sambawy01/Retail-Compliance-System/internal/api"
@@ -71,15 +71,22 @@ func run() error {
 	// Create identity service
 	identitySvc := identity.New(pool, bus)
 
-	// Create auth service — prefer base64 env vars, fall back to file paths
+	// Create auth service — prefer base64 env vars, fall back to file paths.
+	// Fail hard if auth keys are not configured: an unauthenticated server
+	// is a security liability, not a convenience.
 	var authSvc *auth.Service
 	if cfg.JWTPrivateKeyB64 != "" && cfg.JWTPublicKeyB64 != "" {
 		authSvc, err = auth.NewFromBase64(cfg.JWTPrivateKeyB64, cfg.JWTPublicKeyB64)
+		if err != nil {
+			return fmt.Errorf("auth: failed to init from base64 keys: %w", err)
+		}
 	} else if cfg.JWTPrivateKey != "" && cfg.JWTPublicKey != "" {
 		authSvc, err = auth.New(cfg.JWTPrivateKey, cfg.JWTPublicKey)
-	}
-	if err != nil {
-		slog.Warn("auth service not fully initialized", "error", err)
+		if err != nil {
+			return fmt.Errorf("auth: failed to init from key files: %w", err)
+		}
+	} else {
+		return fmt.Errorf("auth: JWT keys are required (set JWT_PRIVATE_KEY_B64/JWT_PUBLIC_KEY_B64 or JWT_PRIVATE_KEY_PATH/JWT_PUBLIC_KEY_PATH)")
 	}
 
 	// Create API server + router
@@ -133,7 +140,5 @@ func run() error {
 	}
 	slog.Info("server stopped")
 
-	// Suppress unused-import lint for pgxpool (used for type inference via api/identity).
-	var _ *pgxpool.Pool = pool
 	return nil
 }

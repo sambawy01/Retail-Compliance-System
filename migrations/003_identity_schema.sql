@@ -28,7 +28,7 @@ CREATE INDEX idx_identity_persons_employee   ON identity_persons(employee_id);
 ALTER TABLE identity_persons ENABLE ROW LEVEL SECURITY;
 ALTER TABLE identity_persons FORCE ROW LEVEL SECURITY;
 CREATE POLICY org_isolation ON identity_persons
-    USING (org_id = current_setting('app.current_org_id')::UUID);
+    USING (org_id = current_setting('app.current_org_id', true)::UUID) WITH CHECK (org_id = current_setting('app.current_org_id', true)::UUID);
 
 -- ---------------------------------------------------------------------------
 -- identity_templates  (encrypted-at-rest biometric embeddings)
@@ -56,7 +56,7 @@ CREATE INDEX idx_identity_templates_embedding_hnsw
 ALTER TABLE identity_templates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE identity_templates FORCE ROW LEVEL SECURITY;
 CREATE POLICY org_isolation ON identity_templates
-    USING (org_id = current_setting('app.current_org_id')::UUID);
+    USING (org_id = current_setting('app.current_org_id', true)::UUID) WITH CHECK (org_id = current_setting('app.current_org_id', true)::UUID);
 
 -- ---------------------------------------------------------------------------
 -- identity_consents  (PDP Law — explicit, revocable consent record)
@@ -83,7 +83,7 @@ CREATE INDEX idx_identity_consents_revoked   ON identity_consents(org_id, revoke
 ALTER TABLE identity_consents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE identity_consents FORCE ROW LEVEL SECURITY;
 CREATE POLICY org_isolation ON identity_consents
-    USING (org_id = current_setting('app.current_org_id')::UUID);
+    USING (org_id = current_setting('app.current_org_id', true)::UUID) WITH CHECK (org_id = current_setting('app.current_org_id', true)::UUID);
 
 -- ---------------------------------------------------------------------------
 -- identity_access_audit  (every access to biometric data is logged)
@@ -108,7 +108,7 @@ CREATE INDEX idx_identity_access_audit_time      ON identity_access_audit(org_id
 ALTER TABLE identity_access_audit ENABLE ROW LEVEL SECURITY;
 ALTER TABLE identity_access_audit FORCE ROW LEVEL SECURITY;
 CREATE POLICY org_isolation ON identity_access_audit
-    USING (org_id = current_setting('app.current_org_id')::UUID);
+    USING (org_id = current_setting('app.current_org_id', true)::UUID) WITH CHECK (org_id = current_setting('app.current_org_id', true)::UUID);
 
 -- ---------------------------------------------------------------------------
 -- identity_dek  (per-org data-encryption-key envelope; supports rotation)
@@ -128,7 +128,7 @@ CREATE INDEX idx_identity_dek_org_id ON identity_dek(org_id);
 ALTER TABLE identity_dek ENABLE ROW LEVEL SECURITY;
 ALTER TABLE identity_dek FORCE ROW LEVEL SECURITY;
 CREATE POLICY org_isolation ON identity_dek
-    USING (org_id = current_setting('app.current_org_id')::UUID);
+    USING (org_id = current_setting('app.current_org_id', true)::UUID) WITH CHECK (org_id = current_setting('app.current_org_id', true)::UUID);
 
 -- ---------------------------------------------------------------------------
 -- face_erasure_log  (right-to-erasure audit trail per PDP Law)
@@ -151,7 +151,7 @@ CREATE INDEX idx_face_erasure_log_person_id ON face_erasure_log(person_id);
 ALTER TABLE face_erasure_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE face_erasure_log FORCE ROW LEVEL SECURITY;
 CREATE POLICY org_isolation ON face_erasure_log
-    USING (org_id = current_setting('app.current_org_id')::UUID);
+    USING (org_id = current_setting('app.current_org_id', true)::UUID) WITH CHECK (org_id = current_setting('app.current_org_id', true)::UUID);
 
 -- ---------------------------------------------------------------------------
 -- Grants
@@ -160,7 +160,11 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     identity_persons,
     identity_templates,
     identity_consents,
+    identity_dek
+TO watchdog_app;
+
+-- Biometric audit and erasure logs are append-only — no UPDATE or DELETE
+GRANT SELECT, INSERT ON
     identity_access_audit,
-    identity_dek,
     face_erasure_log
 TO watchdog_app;

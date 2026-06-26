@@ -21,7 +21,7 @@ CREATE TABLE organizations (
 ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE organizations FORCE ROW LEVEL SECURITY;
 CREATE POLICY org_isolation ON organizations
-    USING (org_id = current_setting('app.current_org_id')::UUID);
+    USING (org_id = current_setting('app.current_org_id', true)::UUID) WITH CHECK (org_id = current_setting('app.current_org_id', true)::UUID);
 
 -- ---------------------------------------------------------------------------
 -- locations
@@ -44,7 +44,7 @@ CREATE INDEX idx_locations_org_status    ON locations(org_id, status);
 ALTER TABLE locations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE locations FORCE ROW LEVEL SECURITY;
 CREATE POLICY org_isolation ON locations
-    USING (org_id = current_setting('app.current_org_id')::UUID);
+    USING (org_id = current_setting('app.current_org_id', true)::UUID) WITH CHECK (org_id = current_setting('app.current_org_id', true)::UUID);
 
 -- ---------------------------------------------------------------------------
 -- users
@@ -69,7 +69,7 @@ CREATE INDEX idx_users_org_status ON users(org_id, status);
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE users FORCE ROW LEVEL SECURITY;
 CREATE POLICY org_isolation ON users
-    USING (org_id = current_setting('app.current_org_id')::UUID);
+    USING (org_id = current_setting('app.current_org_id', true)::UUID) WITH CHECK (org_id = current_setting('app.current_org_id', true)::UUID);
 
 -- ---------------------------------------------------------------------------
 -- user_location_access
@@ -87,7 +87,7 @@ CREATE INDEX idx_ula_location_id   ON user_location_access(location_id);
 ALTER TABLE user_location_access ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_location_access FORCE ROW LEVEL SECURITY;
 CREATE POLICY org_isolation ON user_location_access
-    USING (org_id = current_setting('app.current_org_id')::UUID);
+    USING (org_id = current_setting('app.current_org_id', true)::UUID) WITH CHECK (org_id = current_setting('app.current_org_id', true)::UUID);
 
 -- ---------------------------------------------------------------------------
 -- employees
@@ -114,7 +114,7 @@ CREATE INDEX idx_employees_user_id     ON employees(user_id);
 ALTER TABLE employees ENABLE ROW LEVEL SECURITY;
 ALTER TABLE employees FORCE ROW LEVEL SECURITY;
 CREATE POLICY org_isolation ON employees
-    USING (org_id = current_setting('app.current_org_id')::UUID);
+    USING (org_id = current_setting('app.current_org_id', true)::UUID) WITH CHECK (org_id = current_setting('app.current_org_id', true)::UUID);
 
 -- ---------------------------------------------------------------------------
 -- audit_log
@@ -138,7 +138,7 @@ CREATE INDEX idx_audit_action       ON audit_log(org_id, action, created_at);
 ALTER TABLE audit_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_log FORCE ROW LEVEL SECURITY;
 CREATE POLICY org_isolation ON audit_log
-    USING (org_id = current_setting('app.current_org_id')::UUID);
+    USING (org_id = current_setting('app.current_org_id', true)::UUID) WITH CHECK (org_id = current_setting('app.current_org_id', true)::UUID);
 
 -- ---------------------------------------------------------------------------
 -- Grants
@@ -148,7 +148,11 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     locations,
     users,
     user_location_access,
-    employees,
+    employees
+TO watchdog_app;
+
+-- Audit log is append-only — no UPDATE or DELETE
+GRANT SELECT, INSERT ON
     audit_log
 TO watchdog_app;
 

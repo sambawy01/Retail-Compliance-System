@@ -39,7 +39,7 @@ func (s *Service) CreateCamera(ctx context.Context, in CreateCameraInput) (Camer
 	err := database.TenantTx(ctx, s.pool, func(ctx context.Context, tx pgx.Tx) error {
 		const q = `
 			INSERT INTO vision_cameras (camera_id, org_id, location_id, name, rtsp_url, status)
-			VALUES ($1, current_setting('app.current_org_id')::uuid, $2, $3, $4, $5)
+			VALUES ($1, current_setting('app.current_org_id', true)::uuid, $2, $3, $4, $5)
 			RETURNING camera_id, org_id, location_id, name, rtsp_url, status,
 			          last_heartbeat_at, created_at, updated_at`
 		cam.CameraID = uuid.New()

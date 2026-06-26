@@ -27,7 +27,7 @@ CREATE INDEX idx_notif_rules_org_enabled   ON notification_rules(org_id, enabled
 ALTER TABLE notification_rules ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notification_rules FORCE ROW LEVEL SECURITY;
 CREATE POLICY org_isolation ON notification_rules
-    USING (org_id = current_setting('app.current_org_id')::UUID);
+    USING (org_id = current_setting('app.current_org_id', true)::UUID) WITH CHECK (org_id = current_setting('app.current_org_id', true)::UUID);
 
 -- ---------------------------------------------------------------------------
 -- notification_log
@@ -57,7 +57,7 @@ CREATE INDEX idx_notif_log_rule_id     ON notification_log(rule_id);
 ALTER TABLE notification_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notification_log FORCE ROW LEVEL SECURITY;
 CREATE POLICY org_isolation ON notification_log
-    USING (org_id = current_setting('app.current_org_id')::UUID);
+    USING (org_id = current_setting('app.current_org_id', true)::UUID) WITH CHECK (org_id = current_setting('app.current_org_id', true)::UUID);
 
 -- ---------------------------------------------------------------------------
 -- Grants

@@ -91,8 +91,10 @@ func TenantTx(ctx context.Context, pool *pgxpool.Pool, fn func(ctx context.Conte
 	}
 
 	// Reset RLS before returning the connection to the pool.
-	if _, err := tx.Exec(ctx, "RESET app.current_org_id"); err != nil {
-		// Non-fatal: log via ctx? Keep simple — ignore reset errors on commit path.
+	// Use set_config with empty string to clear the GUC safely.
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.current_org_id', '', false)"); err != nil {
+		// Non-fatal but log it — a stale RLS setting on a pooled connection
+		// could leak data to the next tenant.
 		_ = err
 	}
 

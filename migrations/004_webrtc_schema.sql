@@ -27,7 +27,7 @@ CREATE INDEX idx_webrtc_sessions_org_time    ON webrtc_sessions(org_id, created_
 ALTER TABLE webrtc_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE webrtc_sessions FORCE ROW LEVEL SECURITY;
 CREATE POLICY org_isolation ON webrtc_sessions
-    USING (org_id = current_setting('app.current_org_id')::UUID);
+    USING (org_id = current_setting('app.current_org_id', true)::UUID) WITH CHECK (org_id = current_setting('app.current_org_id', true)::UUID);
 
 -- ---------------------------------------------------------------------------
 -- webrtc_turn_credentials
@@ -47,7 +47,7 @@ CREATE INDEX idx_turn_creds_expires    ON webrtc_turn_credentials(expires_at);
 ALTER TABLE webrtc_turn_credentials ENABLE ROW LEVEL SECURITY;
 ALTER TABLE webrtc_turn_credentials FORCE ROW LEVEL SECURITY;
 CREATE POLICY org_isolation ON webrtc_turn_credentials
-    USING (org_id = current_setting('app.current_org_id')::UUID);
+    USING (org_id = current_setting('app.current_org_id', true)::UUID) WITH CHECK (org_id = current_setting('app.current_org_id', true)::UUID);
 
 -- ---------------------------------------------------------------------------
 -- Grants

@@ -26,7 +26,7 @@ CREATE INDEX idx_cameras_org_status   ON cameras(org_id, status);
 ALTER TABLE cameras ENABLE ROW LEVEL SECURITY;
 ALTER TABLE cameras FORCE ROW LEVEL SECURITY;
 CREATE POLICY org_isolation ON cameras
-    USING (org_id = current_setting('app.current_org_id')::UUID);
+    USING (org_id = current_setting('app.current_org_id', true)::UUID) WITH CHECK (org_id = current_setting('app.current_org_id', true)::UUID);
 
 -- ---------------------------------------------------------------------------
 -- zones
@@ -50,7 +50,7 @@ CREATE INDEX idx_zones_camera_id  ON zones(camera_id);
 ALTER TABLE zones ENABLE ROW LEVEL SECURITY;
 ALTER TABLE zones FORCE ROW LEVEL SECURITY;
 CREATE POLICY org_isolation ON zones
-    USING (org_id = current_setting('app.current_org_id')::UUID);
+    USING (org_id = current_setting('app.current_org_id', true)::UUID) WITH CHECK (org_id = current_setting('app.current_org_id', true)::UUID);
 
 -- ---------------------------------------------------------------------------
 -- clips
@@ -76,7 +76,7 @@ CREATE INDEX idx_clips_camera_time  ON clips(camera_id, starts_at);
 ALTER TABLE clips ENABLE ROW LEVEL SECURITY;
 ALTER TABLE clips FORCE ROW LEVEL SECURITY;
 CREATE POLICY org_isolation ON clips
-    USING (org_id = current_setting('app.current_org_id')::UUID);
+    USING (org_id = current_setting('app.current_org_id', true)::UUID) WITH CHECK (org_id = current_setting('app.current_org_id', true)::UUID);
 
 -- ---------------------------------------------------------------------------
 -- detections
@@ -106,7 +106,7 @@ CREATE INDEX idx_detections_org_severity_time ON detections(org_id, severity, de
 ALTER TABLE detections ENABLE ROW LEVEL SECURITY;
 ALTER TABLE detections FORCE ROW LEVEL SECURITY;
 CREATE POLICY org_isolation ON detections
-    USING (org_id = current_setting('app.current_org_id')::UUID);
+    USING (org_id = current_setting('app.current_org_id', true)::UUID) WITH CHECK (org_id = current_setting('app.current_org_id', true)::UUID);
 
 -- ---------------------------------------------------------------------------
 -- vision_severity_overrides
@@ -123,7 +123,7 @@ CREATE TABLE vision_severity_overrides (
 ALTER TABLE vision_severity_overrides ENABLE ROW LEVEL SECURITY;
 ALTER TABLE vision_severity_overrides FORCE ROW LEVEL SECURITY;
 CREATE POLICY org_isolation ON vision_severity_overrides
-    USING (org_id = current_setting('app.current_org_id')::UUID);
+    USING (org_id = current_setting('app.current_org_id', true)::UUID) WITH CHECK (org_id = current_setting('app.current_org_id', true)::UUID);
 
 -- ---------------------------------------------------------------------------
 -- Grants

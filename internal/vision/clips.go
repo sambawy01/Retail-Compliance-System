@@ -61,7 +61,7 @@ func insertClip(ctx context.Context, pool *pgxpool.Pool, in InsertClipInput) (Cl
 	}
 	err := database.TenantTx(ctx, pool, func(ctx context.Context, tx pgx.Tx) error {
 		const q = `INSERT INTO clips (clip_id, org_id, location_id, camera_id, s3_bucket, s3_key, duration_seconds, starts_at, retention_tier)
-			VALUES ($1, current_setting('app.current_org_id')::uuid, $2, $3, $4, $5, $6, $7, $8) RETURNING created_at`
+			VALUES ($1, current_setting('app.current_org_id', true)::uuid, $2, $3, $4, $5, $6, $7, $8) RETURNING created_at`
 		return tx.QueryRow(ctx, q, c.ClipID, c.LocationID, c.CameraID, c.S3Bucket, c.S3Key, c.DurationSeconds, c.StartsAt, string(c.RetentionTier)).Scan(&c.CreatedAt)
 	})
 	if err != nil {

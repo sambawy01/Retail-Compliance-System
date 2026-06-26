@@ -62,7 +62,7 @@ func (s *Service) InsertDetection(ctx context.Context, in InsertDetectionInput) 
 	err := database.TenantTx(ctx, s.pool, func(ctx context.Context, tx pgx.Tx) error {
 		const q = `
 			INSERT INTO vision_detections (detection_id, org_id, camera_id, zone_id, event_type, severity, confidence, payload, clip_id, detected_at)
-			VALUES ($1, current_setting('app.current_org_id')::uuid, $2, $3, $4, $5, $6, $7, $8, $9)
+			VALUES ($1, current_setting('app.current_org_id', true)::uuid, $2, $3, $4, $5, $6, $7, $8, $9)
 			RETURNING org_id, location_id, created_at`
 		return tx.QueryRow(ctx, q,
 			det.DetectionID, det.CameraID, det.ZoneID, det.EventType, string(det.Severity),

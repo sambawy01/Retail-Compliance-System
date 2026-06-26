@@ -38,10 +38,10 @@ func (s *Service) CreateZone(ctx context.Context, in CreateZoneInput) (Zone, err
 		}
 		const q = `
 			INSERT INTO vision_zones (zone_id, org_id, camera_id, name, kind, polygon, capacity)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			VALUES ($1, current_setting('app.current_org_id', true)::uuid, $2, $3, $4, $5, $6)
 			RETURNING created_at`
 		return tx.QueryRow(ctx, q,
-			z.ZoneID, z.OrgID, z.CameraID, z.Name, z.Kind, z.Polygon, z.Capacity,
+			z.ZoneID, z.CameraID, z.Name, z.Kind, z.Polygon, z.Capacity,
 		).Scan(&z.CreatedAt)
 	})
 	if err != nil {

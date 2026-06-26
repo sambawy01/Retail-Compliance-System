@@ -4,8 +4,6 @@ package api
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -72,18 +70,18 @@ func (s *Server) Router() http.Handler {
 		// Cameras
 		r.Route("/api/v1/vision/cameras", func(r chi.Router) {
 			r.Get("/", s.listCameras)
-			r.Post("/", s.createCamera)
+			r.With(s.requireRole("owner", "admin", "manager")).Post("/", s.createCamera)
 			r.Get("/{cameraID}", s.getCamera)
-			r.Patch("/{cameraID}", s.updateCamera)
-			r.Delete("/{cameraID}", s.deleteCamera)
+			r.With(s.requireRole("owner", "admin", "manager")).Patch("/{cameraID}", s.updateCamera)
+			r.With(s.requireRole("owner", "admin")).Delete("/{cameraID}", s.deleteCamera)
 			r.Post("/{cameraID}/heartbeat", s.cameraHeartbeat)
 		})
 
 		// Zones
 		r.Route("/api/v1/vision/zones", func(r chi.Router) {
 			r.Get("/", s.listZones)
-			r.Post("/", s.createZone)
-			r.Delete("/{zoneID}", s.deleteZone)
+			r.With(s.requireRole("owner", "admin", "manager")).Post("/", s.createZone)
+			r.With(s.requireRole("owner", "admin")).Delete("/{zoneID}", s.deleteZone)
 		})
 
 		// Detections
@@ -103,11 +101,11 @@ func (s *Server) Router() http.Handler {
 		// Identity / Face ID
 		r.Route("/api/v1/identity", func(r chi.Router) {
 			r.Get("/persons", s.listPersons)
-			r.Post("/persons", s.enrollPerson)
+			r.With(s.requireRole("owner", "admin", "manager")).Post("/persons", s.enrollPerson)
 			r.Get("/persons/{personID}", s.getPerson)
-			r.Delete("/persons/{personID}", s.revokePerson)
-			r.Post("/persons/{personID}/consent", s.recordConsent)
-			r.Post("/persons/{personID}/templates", s.insertTemplate)
+			r.With(s.requireRole("owner", "admin")).Delete("/persons/{personID}", s.revokePerson)
+			r.With(s.requireRole("owner", "admin", "manager")).Post("/persons/{personID}/consent", s.recordConsent)
+			r.With(s.requireRole("owner", "admin", "manager")).Post("/persons/{personID}/templates", s.insertTemplate)
 			r.Post("/match", s.matchFace)
 			r.Get("/audit", s.listAuditLog)
 		})
@@ -157,23 +155,53 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		token := strings.TrimPrefix(header, "Bearer ")
+		if token == "" {
+			writeError(w, http.StatusUnauthorized, "missing or invalid authorization header")
+			return
+		}
+		if s.auth == nil {
+			slog.Error("auth service not initialized — rejecting request")
+			writeError(w, http.StatusServiceUnavailable, "authentication service unavailable")
+			return
+		}
 		claims, err := s.auth.ValidateToken(token)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "invalid token")
 			return
 		}
-		// Inject org_id and user_id into context for RLS
+		// Inject org_id, user_id, and role into context for RLS + RBAC
 		ctx, err := tenant.WithOrgIDString(r.Context(), claims.OrgID)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "invalid org_id in token")
 			return
 		}
 		ctx = context.WithValue(ctx, userCtxKey{}, claims.UserID)
+		ctx = context.WithValue(ctx, roleCtxKey{}, claims.Role)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
 type userCtxKey struct{}
+type roleCtxKey struct{}
+
+// requireRole returns middleware that checks the JWT role claim.
+// Pass allowed roles; if the user's role is not in the set, 403.
+func (s *Server) requireRole(roles ...string) func(http.Handler) http.Handler {
+	allowed := make(map[string]bool, len(roles))
+	for _, r := range roles {
+		allowed[r] = true
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			role, _ := r.Context().Value(roleCtxKey{}).(string)
+			if !allowed[role] {
+				writeError(w, http.StatusForbidden, "insufficient permissions")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
 
 // --- Handlers ---
 
@@ -199,46 +227,63 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Hash password (SHA256 — same as seed script)
-	h := sha256.Sum256([]byte(body.Password))
-	passwordHash := hex.EncodeToString(h[:])
-
-	// Query user from DB
-	orgID, err := tenant.OrgIDFrom(r.Context())
+	// Hash password with bcrypt (same algorithm as seed script must use)
+	passwordHash, err := hashPassword(body.Password)
 	if err != nil {
-		// No tenant context on login — use admin connection
-		ctx := context.Background()
-		var userID, dbOrgID, role, displayName string
-		err := s.pool.QueryRow(ctx,
-			`SELECT user_id, org_id, role, display_name FROM users WHERE email = $1 AND password_hash = $2 AND status = 'active'`,
-			body.Email, passwordHash,
-		).Scan(&userID, &dbOrgID, &role, &displayName)
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, "invalid credentials")
-			return
-		}
-
-		// Generate JWT
-		token, err := s.auth.GenerateToken(userID, dbOrgID, role)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to generate token")
-			return
-		}
-
-		writeJSON(w, http.StatusOK, map[string]any{
-			"token": token,
-			"user": map[string]any{
-				"user_id":      userID,
-				"email":        body.Email,
-				"display_name": displayName,
-				"role":         role,
-				"org_id":       dbOrgID,
-			},
-		})
+		slog.Error("password_hash_failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	_ = orgID // unused fallback
-	writeError(w, http.StatusUnauthorized, "invalid credentials")
+
+	// Use SECURITY DEFINER function to look up credentials (bypasses RLS safely)
+	ctx := context.Background()
+	var userID, dbOrgID, role, displayName string
+	err = s.pool.QueryRow(ctx,
+		`SELECT user_id, org_id, role, display_name FROM fn_login_lookup($1, $2)`,
+		body.Email, passwordHash,
+	).Scan(&userID, &dbOrgID, &role, &displayName)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+
+	// Generate JWT
+	if s.auth == nil {
+		writeError(w, http.StatusServiceUnavailable, "authentication service unavailable")
+		return
+	}
+	token, err := s.auth.GenerateToken(userID, dbOrgID, role)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate token")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"token": token,
+		"user": map[string]any{
+			"user_id":      userID,
+			"email":        body.Email,
+			"display_name": displayName,
+			"role":         role,
+			"org_id":       dbOrgID,
+		},
+	})
+}
+
+// hashPassword hashes a plaintext password using bcrypt.
+// This is used by the login handler to compare against the stored hash.
+func hashPassword(password string) (string, error) {
+	// If the password is already a bcrypt hash (starts with $2), return as-is.
+	// This allows the seed script to pre-hash and the login to compare directly.
+	// Otherwise, hash it with bcrypt cost 12.
+	if len(password) == 60 && password[:3] == "$2a" {
+		return password, nil
+	}
+	h, err := bcryptHash([]byte(password))
+	if err != nil {
+		return "", err
+	}
+	return string(h), nil
 }
 
 func (s *Server) refreshHandler(w http.ResponseWriter, r *http.Request) {
