@@ -48,7 +48,7 @@ func run() error {
 	slog.Info("starting watchdog server", "port", cfg.Port, "env", cfg.Env)
 
 	// Create DB pool
-	poolCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	poolCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	pool, err := database.NewPool(poolCtx, cfg.DatabaseURL)
 	if err != nil {
