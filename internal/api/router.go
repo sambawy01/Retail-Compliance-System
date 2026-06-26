@@ -280,7 +280,8 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Verify password with bcrypt (constant-time comparison)
 	if err := bcryptCompare([]byte(dbPasswordHash), []byte(body.Password)); err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid credentials")
+		slog.Error("login_bcrypt_failed", "email", body.Email, "hash_len", len(dbPasswordHash), "error", err)
+		writeError(w, http.StatusUnauthorized, "invalid credentials - bcrypt failed")
 		return
 	}
 
