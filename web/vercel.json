@@ -1,9 +1,5 @@
 {
-  "build": {
-    "command": "npm run build",
-    "output_dir": "dist"
-  },
-  "env": {
-    "VITE_API_URL": "https://watchdog.railway.app"
-  }
+  "framework": "vite",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist"
 }
