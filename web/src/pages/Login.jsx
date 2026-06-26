@@ -83,8 +83,8 @@ export default function Login() {
             disabled={submitting}
             className="w-full bg-accent hover:bg-accent-hover text-white font-semibold py-2.5 rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
           >
-            {loading && <Loader2 size={16} className="animate-spin" />}
-            {loading ? t('login.loading') : t('login.submit')}
+            {submitting && <Loader2 size={16} className="animate-spin" />}
+            {submitting ? t('login.loading') : t('login.submit')}
           </button>
         </form>
       </div>
