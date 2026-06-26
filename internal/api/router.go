@@ -298,13 +298,16 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Set httpOnly cookie — not accessible to JavaScript, prevents XSS token theft
+	// SameSite=None + Secure=true required for cross-origin (Vercel→Railway) cookie sending.
+	// Railway terminates TLS at proxy so r.TLS is nil — use X-Forwarded-Proto instead.
+	isHTTPS := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 	http.SetCookie(w, &http.Cookie{
 		Name:     "watchdog_session",
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   r.TLS != nil, // Secure in HTTPS, omitted in dev
-		SameSite: http.SameSiteLaxMode,
+		Secure:   isHTTPS,
+		SameSite: http.SameSiteNoneMode,
 		MaxAge:   86400, // 24h
 	})
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -320,11 +323,14 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 
 // logoutHandler clears the session cookie.
 func (s *Server) logoutHandler(w http.ResponseWriter, r *http.Request) {
+	isHTTPS := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 	http.SetCookie(w, &http.Cookie{
 		Name:     "watchdog_session",
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   isHTTPS,
+		SameSite: http.SameSiteNoneMode,
 		MaxAge:   -1, // immediately expire
 	})
 	w.WriteHeader(http.StatusNoContent)
