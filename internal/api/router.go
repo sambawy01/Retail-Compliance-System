@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -274,7 +275,7 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 		body.Email,
 	).Scan(&userID, &dbOrgID, &role, &displayName, &dbPasswordHash)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid credentials")
+		writeError(w, http.StatusUnauthorized, fmt.Sprintf("lookup error: %v", err))
 		return
 	}
 
