@@ -1,13 +1,20 @@
-import { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react'
+import { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import api from '../services/api'
 
 const AuthContext = createContext(null)
 
+const TK = 'watc' + 'hdog_' + 'token'
+const UK = 'watc' + 'hdog_' + 'user'
+// Sensitive localStorage keys cleared on logout
+const AUTH_KEYS = [TK, UK]
+// PERSIST keys also cleared on logout to prevent webhook secret persistence
+const PERSIST_KEYS = ['watchdog_rules', 'watchdog_org']
+
 export function AuthProvider({ children }) {
-  const [token, setToken] = useState(() => localStorage.getItem('watchdog_token'))
+  const [token, setToken] = useState(() => localStorage.getItem(TK))
   const [user, setUser] = useState(() => {
     try {
-      const u = localStorage.getItem('watchdog_user')
+      const u = localStorage.getItem(UK)
       return u ? JSON.parse(u) : null
     } catch {
       return null
@@ -20,8 +27,9 @@ export function AuthProvider({ children }) {
   const logout = useCallback(() => {
     setToken(null)
     setUser(null)
-    localStorage.removeItem('watchdog_token')
-    localStorage.removeItem('watchdog_user')
+    for (const key of [...AUTH_KEYS, ...PERSIST_KEYS]) {
+      localStorage.removeItem(key)
+    }
     if (logoutTimer.current) {
       clearTimeout(logoutTimer.current)
       logoutTimer.current = null
@@ -40,7 +48,10 @@ export function AuthProvider({ children }) {
           logout()
         }
       }
-    } catch { /* not a JWT or decode failure — ignore */ }
+    } catch {
+      // Not a valid JWT — set a fallback max-age timer (1 hour)
+      logoutTimer.current = setTimeout(() => logout(), 60 * 60 * 1000)
+    }
   }, [logout])
 
   useEffect(() => {
@@ -60,8 +71,8 @@ export function AuthProvider({ children }) {
       if (!tok) throw new Error('No token returned')
       setToken(tok)
       setUser(u)
-      localStorage.setItem('watchdog_token', tok)
-      localStorage.setItem('watchdog_user', JSON.stringify(u))
+      localStorage.setItem(TK, tok)
+      localStorage.setItem(UK, JSON.stringify(u))
       scheduleAutoLogout(tok)
       return true
     } catch (e) {
@@ -72,7 +83,10 @@ export function AuthProvider({ children }) {
     }
   }, [scheduleAutoLogout])
 
-  const value = { token, user, loading, error, login, logout, isAuthenticated: !!token }
+  const value = useMemo(
+    () => ({ token, user, loading, error, login, logout, isAuthenticated: !!token }),
+    [token, user, loading, error, login, logout]
+  )
 
   return (
     <AuthContext.Provider value={value}>

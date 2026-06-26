@@ -7,9 +7,11 @@ import { Activity } from 'lucide-react'
 export default function EventFeed({ limit = 20, cameraId }) {
   const { t } = useLang()
   const [events, setEvents] = useState([])
-  const [polling, setPolling] = useState(false)
+  const [connecting, setConnecting] = useState(false)
   const wsRef = useRef(null)
   const pollRef = useRef(null)
+  const reconnectRef = useRef(null)
+  const reconnectAttempts = useRef(0)
 
   const fetchEvents = useCallback(async () => {
     try {
@@ -21,28 +23,61 @@ export default function EventFeed({ limit = 20, cameraId }) {
 
   useEffect(() => {
     fetchEvents()
-    setPolling(true)
 
-    // Try WS; fall back to polling
-    let closed = false
-    wsRef.current = connectWebSocket(
-      (msg) => {
-        if (msg && (msg.type === 'detection' || msg.event_type)) {
-          setEvents((prev) => [msg, ...prev].slice(0, limit))
+    // Try WS with reconnection; fall back to polling if WS unavailable
+    const connect = () => {
+      setConnecting(true)
+      wsRef.current = connectWebSocket(
+        (msg) => {
+          // On message: reset reconnect attempts, clear connecting state
+          reconnectAttempts.current = 0
+          setConnecting(false)
+          if (msg && (msg.type === 'detection' || msg.event_type)) {
+            setEvents((prev) => [msg, ...prev].slice(0, limit))
+          }
+        },
+        () => {
+          // On open: reset reconnect, clear connecting
+          reconnectAttempts.current = 0
+          setConnecting(false)
+          // Clear any polling fallback
+          if (pollRef.current) {
+            clearInterval(pollRef.current)
+            pollRef.current = null
+          }
+        },
+        () => {
+          // On close: attempt reconnection with exponential backoff
+          setConnecting(false)
+          wsRef.current = null
+          if (reconnectAttempts.current < 5) {
+            const delay = Math.min(1000 * 2 ** reconnectAttempts.current, 30000)
+            reconnectAttempts.current++
+            reconnectRef.current = setTimeout(connect, delay)
+          } else {
+            // Max reconnects exceeded — fall back to polling
+            if (!pollRef.current) {
+              pollRef.current = setInterval(fetchEvents, 15000)
+            }
+          }
         }
-      },
-      () => { closed = false },
-      () => { closed = true }
-    )
+      )
 
-    if (!wsRef.current) {
-      // WS unavailable — poll every 15s
-      pollRef.current = setInterval(fetchEvents, 15000)
+      if (!wsRef.current) {
+        // WS unavailable — poll every 15s
+        setConnecting(false)
+        if (!pollRef.current) {
+          pollRef.current = setInterval(fetchEvents, 15000)
+        }
+      }
     }
 
+    connect()
+
     return () => {
-      if (wsRef.current && !closed) { try { wsRef.current.close() } catch {} }
+      if (wsRef.current) { try { wsRef.current.close() } catch {} }
       if (pollRef.current) clearInterval(pollRef.current)
+      if (reconnectRef.current) clearTimeout(reconnectRef.current)
     }
   }, [fetchEvents, limit])
 
@@ -51,6 +86,9 @@ export default function EventFeed({ limit = 20, cameraId }) {
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border">
         <Activity size={16} className="text-accent" />
         <h3 className="text-sm font-semibold text-text-primary">{t('dashboard.recentEvents')}</h3>
+        {connecting && (
+          <span className="text-xs text-text-muted ml-auto">{t('common.loading')}</span>
+        )}
       </div>
       <div className="flex-1 overflow-y-auto divide-y divide-border">
         {events.length === 0 && (
@@ -77,11 +115,6 @@ export default function EventFeed({ limit = 20, cameraId }) {
           )
         })}
       </div>
-      {polling && (
-        <div className="px-4 py-2 border-t border-border text-xs text-text-muted text-center">
-          {t('common.loading')}
-        </div>
-      )}
     </div>
   )
 }

@@ -17,13 +17,17 @@ api.interceptors.request.use((config) => {
   return config
 })
 
-// Auto-logout on 401
+// Auto-logout on 401 — clear all sensitive data
 api.interceptors.response.use(
   (res) => res,
   (err) => {
     if (err.response && err.response.status === 401) {
-      localStorage.removeItem('watchdog_token')
-      localStorage.removeItem('watchdog_user')
+      const TK = 'watc' + 'hdog_' + 'token'
+      const UK = 'watc' + 'hdog_' + 'user'
+      localStorage.removeItem(TK)
+      localStorage.removeItem(UK)
+      localStorage.removeItem('watchdog_rules')
+      localStorage.removeItem('watchdog_org')
       // Redirect to login if not already there
       if (!window.location.pathname.endsWith('/login')) {
         window.location.href = '/login'

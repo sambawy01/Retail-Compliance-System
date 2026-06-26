@@ -4,6 +4,22 @@ import { apiGet, apiPost, api } from '../services/api'
 import { fmtDate } from '../services/constants'
 import { ScanFace, UserPlus, X, ShieldCheck, FileText, Ban, ChevronDown, ChevronUp } from 'lucide-react'
 
+// Fields to redact from biometric consent/audit JSON before rendering to DOM
+const SENSITIVE_FIELDS = ['embedding', 'template', 'image_hash', 'signature_sha256', 'password_hash', 'wrapped_key', 'kms_key_arn']
+
+function redactBiometric(obj) {
+  if (!obj || typeof obj !== 'object') return obj
+  const out = Array.isArray(obj) ? [...obj] : { ...obj }
+  for (const key of Object.keys(out)) {
+    if (SENSITIVE_FIELDS.includes(key)) {
+      out[key] = '[REDACTED]'
+    } else if (typeof out[key] === 'object' && out[key] !== null) {
+      out[key] = redactBiometric(out[key])
+    }
+  }
+  return out
+}
+
 export default function FaceID() {
   const { t } = useLang()
   const [persons, setPersons] = useState([])
@@ -132,7 +148,7 @@ export default function FaceID() {
                       </div>
                       {consent[p.id] ? (
                         <pre className="text-xs text-text-secondary overflow-x-auto max-h-40">
-{JSON.stringify(consent[p.id], null, 2)}
+{JSON.stringify(redactBiometric(consent[p.id]), null, 2)}
                         </pre>
                       ) : <div className="text-xs text-text-muted">—</div>}
                     </div>
