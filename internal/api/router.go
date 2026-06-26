@@ -265,22 +265,21 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Hash password with bcrypt (same algorithm as seed script must use)
-	passwordHash, err := hashPassword(body.Password)
+	// Use SECURITY DEFINER function to look up user by email (bypasses RLS safely)
+	// Returns password_hash for Go-side bcrypt verification
+	ctx := context.Background()
+	var userID, dbOrgID, role, displayName, dbPasswordHash string
+	err := s.pool.QueryRow(ctx,
+		`SELECT user_id, org_id, role, display_name, password_hash FROM fn_login_lookup($1)`,
+		body.Email,
+	).Scan(&userID, &dbOrgID, &role, &displayName, &dbPasswordHash)
 	if err != nil {
-		slog.Error("password_hash_failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
+		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
 
-	// Use SECURITY DEFINER function to look up credentials (bypasses RLS safely)
-	ctx := context.Background()
-	var userID, dbOrgID, role, displayName string
-	err = s.pool.QueryRow(ctx,
-		`SELECT user_id, org_id, role, display_name FROM fn_login_lookup($1, $2)`,
-		body.Email, passwordHash,
-	).Scan(&userID, &dbOrgID, &role, &displayName)
-	if err != nil {
+	// Verify password with bcrypt (constant-time comparison)
+	if err := bcryptCompare([]byte(dbPasswordHash), []byte(body.Password)); err != nil {
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
@@ -343,22 +342,6 @@ func (s *Server) meHandler(w http.ResponseWriter, r *http.Request) {
 		"role":    role,
 		"org_id":  orgID.String(),
 	})
-}
-
-// hashPassword hashes a plaintext password using bcrypt.
-// This is used by the login handler to compare against the stored hash.
-func hashPassword(password string) (string, error) {
-	// If the password is already a bcrypt hash (starts with $2), return as-is.
-	// This allows the seed script to pre-hash and the login to compare directly.
-	// Otherwise, hash it with bcrypt cost 12.
-	if len(password) == 60 && password[:3] == "$2a" {
-		return password, nil
-	}
-	h, err := bcryptHash([]byte(password))
-	if err != nil {
-		return "", err
-	}
-	return string(h), nil
 }
 
 func (s *Server) refreshHandler(w http.ResponseWriter, r *http.Request) {
