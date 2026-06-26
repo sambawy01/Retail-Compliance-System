@@ -1,0 +1,52 @@
+# Watch Dog Edge Agent — Easy Mart pilot configuration
+# Copy to config.yaml and fill in real values.
+api_url: https://watchdog-api.example.com
+api_token: SERVICE_TOKEN_HERE
+agent_id: agent-easymart-01
+b2_bucket: watchdog-vision
+b2_region: us-west-002
+heartbeat_seconds: 30
+clip_buffer_seconds: 60
+clip_extract_seconds: 30
+
+cameras:
+  # Camera 1 — Front entrance / checkout
+  - camera_id: 11111111-1111-1111-1111-111111111111
+    rtsp_url: rtsp://10.0.0.10/stream1
+    feature_flags:
+      phone_usage: true
+      checkout_bottleneck: true
+      loitering: true
+      after_hours: true
+      occupancy: true
+      slip_fall: true
+
+  # Camera 2 — Aisles / sales floor
+  - camera_id: 22222222-2222-2222-2222-222222222222
+    rtsp_url: rtsp://10.0.0.11/stream1
+    feature_flags:
+      phone_usage: true
+      cleanliness: true
+      occupancy: true
+      loitering: false
+
+  # Camera 3 — Stockroom / back
+  - camera_id: 33333333-3333-3333-3333-333333333333
+    rtsp_url: rtsp://10.0.0.12/stream1
+    feature_flags:
+      after_hours: true
+      occupancy: true
+
+  # Camera 4 — Back office / time clock (buddy punch detection)
+  - camera_id: 44444444-4444-4444-4444-444444444444
+    rtsp_url: rtsp://10.0.0.13/stream1
+    feature_flags:
+      loyalty: true
+      after_hours: true
+      occupancy: true
+
+# WebRTC fields (optional — enables live video streaming to dashboard):
+# signaling_ws_url: wss://watchdog-api.example.com
+# turn_url: turn:turn.watchdog.example:3478
+# turn_user: watchdog
+# turn_pass: REPLACE_ME
