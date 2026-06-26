@@ -68,6 +68,10 @@ func run() error {
 	visionSvc := vision.New(pool, bus, logger)
 	visionSvc.RegisterHandlers()
 
+	// Wire B2 credentials for presigned URL generation
+	vision.SetPresignerCredentials(cfg.B2KeyID, cfg.B2AppKey, cfg.B2Bucket, "")
+	slog.Info("b2 presigner wired", "configured", cfg.B2KeyID != "")
+
 	// Create identity service
 	identitySvc := identity.New(pool, bus)
 
