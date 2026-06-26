@@ -139,9 +139,9 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         <ComplianceGauge score={complianceScore} />
         <div className="lg:col-span-3 grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatCard icon={AlertTriangle} label={t('dashboard.critical')} value={stats.critical} color="#ef4444" />
-          <StatCard icon={AlertCircle} label={t('dashboard.warning')} value={stats.warning} color="#f59e0b" />
-          <StatCard icon={Info} label={t('dashboard.info')} value={stats.info} color="#3b82f6" />
+          <StatCard icon={AlertTriangle} label={t('dashboard.critical', stats.critical)} value={stats.critical} color="#ef4444" />
+          <StatCard icon={AlertCircle} label={t('dashboard.warning', stats.warning)} value={stats.warning} color="#f59e0b" />
+          <StatCard icon={Info} label={t('dashboard.info', stats.info)} value={stats.info} color="#3b82f6" />
           <StatCard icon={Camera} label={t('dashboard.camerasOnline')} value={`${cameraStatus.online}/${cameraStatus.total}`} color="#22c55e" />
         </div>
       </div>

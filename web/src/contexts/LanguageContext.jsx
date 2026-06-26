@@ -4,6 +4,22 @@ const LanguageContext = createContext(null)
 
 const STORAGE_KEY = 'watchdog_lang'
 
+// Arabic plural rules: 0=zero, 1=one, 2=two, 3-10=few, 11+=many, 100+=other
+function arabicPluralForm(n) {
+  if (n === 0) return 'zero'
+  if (n === 1) return 'one'
+  if (n === 2) return 'two'
+  if (n >= 3 && n <= 10) return 'few'
+  if (n >= 11 && n <= 99) return 'many'
+  return 'other'
+}
+
+// English plural rules: 1=one, everything else=other
+function englishPluralForm(n) {
+  if (n === 1) return 'one'
+  return 'other'
+}
+
 export function LanguageProvider({ children }) {
   const [lang, setLang] = useState(() => {
     try {
@@ -27,7 +43,11 @@ export function LanguageProvider({ children }) {
     setLang((p) => (p === 'en' ? 'ar' : 'en'))
   }, [])
 
-  const t = useCallback((path, fallback) => {
+  // t(path, fallbackOrCount, count?) — supports pluralization
+  // If the second arg is a number, it's treated as count for pluralization.
+  // t('dashboard.cameras', 3) → looks for dashboard.cameras.few (Arabic) or dashboard.cameras.other (English)
+  // t('login.title') → returns the string directly
+  const t = useCallback((path, fallback, count) => {
     const dict = lang === 'ar' ? arDict : enDict
     const parts = path.split('.')
     let cur = dict
@@ -45,7 +65,21 @@ export function LanguageProvider({ children }) {
         break
       }
     }
-    if (cur === undefined) return fallback !== undefined ? fallback : path
+
+    // If count is provided or fallback is a number, resolve plural form
+    const n = count !== undefined ? count : (typeof fallback === 'number' ? fallback : undefined)
+    if (n !== undefined && cur && typeof cur === 'object' && cur !== null) {
+      const formFn = lang === 'ar' ? arabicPluralForm : englishPluralForm
+      const form = formFn(n)
+      // Try the specific form, then 'other', then any string value
+      if (form in cur) cur = cur[form]
+      else if ('other' in cur) cur = cur['other']
+      else if (typeof cur === 'object') cur = path // can't resolve
+    }
+
+    if (cur === undefined || typeof cur === 'object') {
+      return typeof fallback === 'string' ? fallback : path
+    }
     return cur
   }, [lang])
 
