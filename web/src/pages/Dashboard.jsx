@@ -48,6 +48,7 @@ export default function Dashboard() {
   const [cameras, setCameras] = useState([])
   const [detections, setDetections] = useState([])
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
 
   useEffect(() => {
     let active = true

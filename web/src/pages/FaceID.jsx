@@ -24,6 +24,7 @@ export default function FaceID() {
   const { t } = useLang()
   const [persons, setPersons] = useState([])
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ name: '', kind: 'employee' })
   const [formError, setFormError] = useState(null)
@@ -32,14 +33,16 @@ export default function FaceID() {
   const [audit, setAudit] = useState({})
   const [consent, setConsent] = useState({})
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const load = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true)
+    else setLoading(true)
     try {
       const d = await apiGet.persons('employee')
       const arr = Array.isArray(d) ? d : d.items || d.persons || []
       setPersons(arr)
     } catch { /* ignore */ }
-    setLoading(false)
+    if (isRefresh) setRefreshing(false)
+    else setLoading(false)
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -52,7 +55,7 @@ export default function FaceID() {
       setFormMsg(t('faceid.form.success'))
       setForm({ name: '', kind: 'employee' })
       setShowForm(false)
-      load()
+      load(true)
     } catch {
       setFormError(t('faceid.form.error'))
     }
@@ -62,7 +65,7 @@ export default function FaceID() {
     if (!confirm(t('faceid.revokeConfirm'))) return
     try {
       await api.delete(`/identity/persons/${p.id}`)
-      load()
+      load(true)
     } catch { /* ignore */ }
   }
 
