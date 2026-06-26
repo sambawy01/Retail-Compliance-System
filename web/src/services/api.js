@@ -6,42 +6,36 @@ const api = axios.create({
   baseURL,
   timeout: 30000,
   headers: { 'Content-Type': 'application/json' },
-  withCredentials: true, // send httpOnly cookies with every request
+  withCredentials: true,
 })
 
-// Auto-logout on 401
+// Auto-logout on 401 — but skip redirect for auth endpoints
+// (AuthContext catches /auth/me 401s gracefully and sets user=null)
 api.interceptors.response.use(
   (res) => res,
   (err) => {
     if (err.response && err.response.status === 401) {
-      // Clear any lingering localStorage data from the old token-based auth
-      localStorage.removeItem('watchdog_token')
-      localStorage.removeItem('watchdog_user')
-      localStorage.removeItem('watchdog_rules')
-      localStorage.removeItem('watchdog_org')
-      // Redirect to login if not already there
-      if (!window.location.pathname.endsWith('/login')) {
-        window.location.href = '/login'
+      const url = err.config?.url || ''
+      if (!url.includes('/auth/me') && !url.includes('/auth/login') && !url.includes('/auth/logout')) {
+        localStorage.removeItem('watchdog_token')
+        localStorage.removeItem('watchdog_user')
+        localStorage.removeItem('watchdog_rules')
+        localStorage.removeItem('watchdog_org')
+        if (!window.location.pathname.endsWith('/login')) {
+          window.location.href = '/login'
+        }
       }
     }
     return Promise.reject(err)
   }
 )
 
-// Helper for raw health check (not under /api/v1)
 export const healthCheck = () =>
   axios.get((import.meta.env.VITE_API_URL || '') + '/health')
 
-// WebSocket connection helper
-// With httpOnly cookies, WS can't read the token from document.cookie (httpOnly).
-// For WS auth, the backend should issue a short-lived WS ticket via /api/v1/auth/ws-ticket.
-// For now, WS falls back to polling if no ticket is available.
 export function connectWebSocket(onMessage, onOpen, onClose) {
   const wsBase = (import.meta.env.VITE_API_URL || '').replace(/^http/, 'ws')
   if (!wsBase) return null
-  // Try WS without token — cookies aren't sent over WS, so this may fail.
-  // The proper fix is a WS ticket endpoint, but for now we attempt and let
-  // onClose trigger the polling fallback.
   try {
     const ws = new WebSocket(`${wsBase}/ws/events`)
     ws.onopen = () => { onOpen && onOpen() }
@@ -59,7 +53,6 @@ export function connectWebSocket(onMessage, onOpen, onClose) {
   }
 }
 
-// Domain-specific helpers
 export const apiGet = {
   cameras: () => api.get('/vision/cameras').then((r) => r.data),
   camera: (id) => api.get(`/vision/cameras/${id}`).then((r) => r.data),

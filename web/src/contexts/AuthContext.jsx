@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react'
 import api from '../services/api'
 
 const AuthContext = createContext(null)
@@ -9,17 +9,14 @@ export function AuthProvider({ children }) {
   const [error, setError] = useState(null)
 
   // On mount: check if we have a valid session by calling /me
-  // The httpOnly cookie is sent automatically by axios (withCredentials: true)
   useEffect(() => {
     let active = true
     api.get('/auth/me')
       .then((res) => {
-        if (active && res.data) {
-          setUser(res.data)
-        }
+        if (active && res.data) setUser(res.data)
       })
       .catch(() => {
-        // No valid session — user is not authenticated
+        // 401 is expected when not logged in — just set user null
         if (active) setUser(null)
       })
       .finally(() => {
@@ -29,11 +26,8 @@ export function AuthProvider({ children }) {
   }, [])
 
   const logout = useCallback(async () => {
-    try {
-      await api.post('/auth/logout')
-    } catch { /* ignore — cookie may already be expired */ }
+    try { await api.post('/auth/logout') } catch {}
     setUser(null)
-    // Clear any legacy localStorage data
     localStorage.removeItem('watchdog_token')
     localStorage.removeItem('watchdog_user')
     localStorage.removeItem('watchdog_rules')
@@ -45,7 +39,6 @@ export function AuthProvider({ children }) {
     setError(null)
     try {
       const res = await api.post('/auth/login', { email, password })
-      // Token is set as httpOnly cookie by the server — we only get user info back
       const u = res.data.user
       if (!u) throw new Error('Login failed')
       setUser(u)
