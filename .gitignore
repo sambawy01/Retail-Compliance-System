@@ -1,0 +1,47 @@
+# Binaries
+watchdog
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binaries
+*.test
+
+# Output
+*.out
+coverage.txt
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Keys
+*.pem
+*.key
+jwt_private.pem
+jwt_public.pem
+
+# Node (web)
+web/node_modules/
+web/dist/
+
+# Python (edge-agent)
+edge-agent/.venv/
+edge-agent/__pycache__/
+edge-agent/**/__pycache__/
+edge-agent/*.egg-info/
+
+# Docker
+docker-compose.override.yml

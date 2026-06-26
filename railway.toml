@@ -1,0 +1,31 @@
+[env]
+PORT = "8080"
+ENV = "production"
+LOG_LEVEL = "info"
+
+[env.DATABASE_URL]
+# Set in Railway dashboard — Neon Postgres connection string
+
+[env.REDIS_URL]
+# Set in Railway dashboard — Railway Redis connection string
+
+[env.JWT_PRIVATE_KEY_PATH]
+# Set in Railway dashboard — path to private key
+
+[env.JWT_PUBLIC_KEY_PATH]
+# Set in Railway dashboard — path to public key
+
+[env.B2_BUCKET]
+# Set in Railway dashboard — Backblaze B2 bucket name
+
+[env.B2_KEY_ID]
+# Set in Railway dashboard — B2 application key ID
+
+[env.B2_APP_KEY]
+# Set in Railway dashboard — B2 application key
+
+[env.TELEGRAM_BOT_TOKEN]
+# Set in Railway dashboard — Telegram bot token for alerts
+
+[env.TELEGRAM_CHAT_ID]
+# Set in Railway dashboard — Telegram chat ID for alerts
