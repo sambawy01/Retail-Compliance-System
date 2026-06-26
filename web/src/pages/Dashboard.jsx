@@ -1,11 +1,33 @@
-import { useEffect, useState, useMemo } from 'react'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell } from 'recharts'
+import { lazy, Suspense, useEffect, useState, useMemo } from 'react'
 import { useLang } from '../contexts/LanguageContext'
 import { apiGet } from '../services/api'
 import { severityOf, sevColor, CRITICAL_TYPES, WARNING_TYPES } from '../services/constants'
 import ComplianceGauge from '../components/ComplianceGauge'
 import EventFeed from '../components/EventFeed'
 import { ShieldCheck, AlertTriangle, AlertCircle, Info, Camera, CameraOff, Activity, TrendingUp } from 'lucide-react'
+
+// Recharts is heavy (~400 kB). Dynamic-import it only when the Dashboard's
+// "Top violations" chart is actually rendered, so it lands in a dedicated
+// chunk (loaded on demand with the Dashboard) instead of the main bundle.
+const ViolationsChart = lazy(() =>
+  import('recharts').then((m) => ({
+    default: ({ data }) => (
+      <m.ResponsiveContainer width="100%" height={260}>
+        <m.BarChart data={data} layout="vertical" margin={{ left: 0, right: 16 }}>
+          <m.CartesianGrid strokeDasharray="3 3" stroke="#2a2e3a" />
+          <m.XAxis type="number" stroke="#6b7280" fontSize={11} />
+          <m.YAxis dataKey="type" type="category" stroke="#9ca3af" fontSize={11} width={120} tick={{ fill: '#9ca3af' }} />
+          <m.Tooltip cursor={{ fill: '#1e222c' }} contentStyle={{ background: '#171a21', border: '1px solid #2a2e3a', borderRadius: 8, fontSize: 12 }} />
+          <m.Bar dataKey="count" radius={[0, 4, 4, 0]}>
+            {data.map((v, i) => (
+              <m.Cell key={i} fill={sevColor(v.sev)} />
+            ))}
+          </m.Bar>
+        </m.BarChart>
+      </m.ResponsiveContainer>
+    ),
+  }))
+)
 
 function StatCard({ icon: Icon, label, value, color }) {
   return (
@@ -166,19 +188,13 @@ export default function Dashboard() {
           {topViolations.length === 0 ? (
             <div className="text-sm text-text-muted text-center py-12">{t('dashboard.noData')}</div>
           ) : (
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={topViolations} layout="vertical" margin={{ left: 0, right: 16 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#2a2e3a" />
-                <XAxis type="number" stroke="#6b7280" fontSize={11} />
-                <YAxis dataKey="type" type="category" stroke="#9ca3af" fontSize={11} width={120} tick={{ fill: '#9ca3af' }} />
-                <Tooltip cursor={{ fill: '#1e222c' }} contentStyle={{ background: '#171a21', border: '1px solid #2a2e3a', borderRadius: 8, fontSize: 12 }} />
-                <Bar dataKey="count" radius={[0, 4, 4, 0]}>
-                  {topViolations.map((v, i) => (
-                    <Cell key={i} fill={sevColor(v.sev)} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+            <Suspense fallback={
+              <div className="flex items-center justify-center h-[260px] text-text-muted">
+                <Activity size={20} className="animate-pulse me-2" /> {t('common.loading')}
+              </div>
+            }>
+              <ViolationsChart data={topViolations} />
+            </Suspense>
           )}
         </div>
       </div>
