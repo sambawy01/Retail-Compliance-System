@@ -53,6 +53,7 @@ type ConsentInput struct {
 	ConsentText   string `json:"consent_text"`
 	ConsentLocale string `json:"consent_locale"` // "en" or "ar"
 	CapturedBy    string `json:"captured_by"`
+	LawfulBasis   string `json:"lawful_basis"` // consent, legitimate_interest, legal_obligation
 }
 
 // TemplateInput is the payload for storing a face embedding.
@@ -202,10 +203,14 @@ func (s *Service) RecordConsent(ctx context.Context, in ConsentInput) error {
 	return database.TenantTx(ctx, s.pool, func(ctx context.Context, tx pgx.Tx) error {
 		// Compute SHA-256 of person_id + consent_text for tamper-evidence
 		h := sha256.Sum256([]byte(in.PersonID + "|" + in.ConsentText))
+		lawfulBasis := in.LawfulBasis
+		if lawfulBasis == "" {
+			lawfulBasis = "consent" // default per PDP Law
+		}
 		_, err := tx.Exec(ctx, `
-			INSERT INTO identity_consents (consent_id, org_id, person_id, consent_text, consent_locale, captured_by, signature_sha256)
-			VALUES ($1, current_setting('app.current_org_id', true)::uuid, $2, $3, $4, $5, $6)`,
-			uuid.NewString(), in.PersonID, in.ConsentText, in.ConsentLocale, in.CapturedBy, h[:])
+			INSERT INTO identity_consents (consent_id, org_id, person_id, consent_text, consent_locale, captured_by, signature_sha256, lawful_basis)
+			VALUES ($1, current_setting('app.current_org_id', true)::uuid, $2, $3, $4, $5, $6, $7)`,
+			uuid.NewString(), in.PersonID, in.ConsentText, in.ConsentLocale, in.CapturedBy, h[:], lawfulBasis)
 		return err
 	})
 }
