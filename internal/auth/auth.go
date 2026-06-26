@@ -2,6 +2,7 @@
 package auth
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -45,6 +46,32 @@ func New(privateKeyPath, publicKeyPath string) (*Service, error) {
 	}
 
 	return &Service{privateKey: privKey, publicKey: pubKey}, nil
+}
+
+// NewFromBytes creates a Service from raw PEM key bytes.
+func NewFromBytes(privPEM, pubPEM []byte) (*Service, error) {
+	privKey, err := jwt.ParseRSAPrivateKeyFromPEM(privPEM)
+	if err != nil {
+		return nil, fmt.Errorf("auth: parse private key: %w", err)
+	}
+	pubKey, err := jwt.ParseRSAPublicKeyFromPEM(pubPEM)
+	if err != nil {
+		return nil, fmt.Errorf("auth: parse public key: %w", err)
+	}
+	return &Service{privateKey: privKey, publicKey: pubKey}, nil
+}
+
+// NewFromBase64 creates a Service from base64-encoded PEM keys.
+func NewFromBase64(privB64, pubB64 string) (*Service, error) {
+	privPEM, err := base64.StdEncoding.DecodeString(privB64)
+	if err != nil {
+		return nil, fmt.Errorf("auth: decode private key: %w", err)
+	}
+	pubPEM, err := base64.StdEncoding.DecodeString(pubB64)
+	if err != nil {
+		return nil, fmt.Errorf("auth: decode public key: %w", err)
+	}
+	return NewFromBytes(privPEM, pubPEM)
 }
 
 // GenerateToken creates a signed JWT for the given user.

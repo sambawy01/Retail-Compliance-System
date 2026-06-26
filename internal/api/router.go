@@ -4,6 +4,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -192,9 +194,51 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	// TODO: verify credentials against DB, generate JWT
-	// For now return error
-	writeError(w, http.StatusNotImplemented, "login not yet implemented")
+	if body.Email == "" || body.Password == "" {
+		writeError(w, http.StatusBadRequest, "email and password required")
+		return
+	}
+
+	// Hash password (SHA256 — same as seed script)
+	h := sha256.Sum256([]byte(body.Password))
+	passwordHash := hex.EncodeToString(h[:])
+
+	// Query user from DB
+	orgID, err := tenant.OrgIDFrom(r.Context())
+	if err != nil {
+		// No tenant context on login — use admin connection
+		ctx := context.Background()
+		var userID, dbOrgID, role, displayName string
+		err := s.pool.QueryRow(ctx,
+			`SELECT user_id, org_id, role, display_name FROM users WHERE email = $1 AND password_hash = $2 AND status = 'active'`,
+			body.Email, passwordHash,
+		).Scan(&userID, &dbOrgID, &role, &displayName)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "invalid credentials")
+			return
+		}
+
+		// Generate JWT
+		token, err := s.auth.GenerateToken(userID, dbOrgID, role)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to generate token")
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"token": token,
+			"user": map[string]any{
+				"user_id":      userID,
+				"email":        body.Email,
+				"display_name": displayName,
+				"role":         role,
+				"org_id":       dbOrgID,
+			},
+		})
+		return
+	}
+	_ = orgID // unused fallback
+	writeError(w, http.StatusUnauthorized, "invalid credentials")
 }
 
 func (s *Server) refreshHandler(w http.ResponseWriter, r *http.Request) {

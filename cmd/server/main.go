@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/sambawy01/Retail-Compliance-System/internal/alerts"
 	"github.com/sambawy01/Retail-Compliance-System/internal/api"
 	"github.com/sambawy01/Retail-Compliance-System/internal/auth"
 	"github.com/sambawy01/Retail-Compliance-System/internal/config"
@@ -43,7 +44,7 @@ func run() error {
 	logger := observability.NewLogger(cfg.LogLevel, cfg.Env)
 	slog.SetDefault(logger)
 
-	slog.Info("starting watchdog server", "port", cfg.HTTPPort, "env", cfg.Env)
+	slog.Info("starting watchdog server", "port", cfg.Port, "env", cfg.Env)
 
 	// Create DB pool
 	poolCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -66,13 +67,17 @@ func run() error {
 	// Create vision service + register handlers
 	visionSvc := vision.New(pool, bus, logger)
 	visionSvc.RegisterHandlers()
-	vision.SetB2Bucket(cfg.B2Bucket)
 
 	// Create identity service
 	identitySvc := identity.New(pool, bus)
 
-	// Create auth service (non-fatal if keys are missing during dev)
-	authSvc, err := auth.New(cfg.JWTPrivateKey, cfg.JWTPublicKey)
+	// Create auth service — prefer base64 env vars, fall back to file paths
+	var authSvc *auth.Service
+	if cfg.JWTPrivateKeyB64 != "" && cfg.JWTPublicKeyB64 != "" {
+		authSvc, err = auth.NewFromBase64(cfg.JWTPrivateKeyB64, cfg.JWTPublicKeyB64)
+	} else if cfg.JWTPrivateKey != "" && cfg.JWTPublicKey != "" {
+		authSvc, err = auth.New(cfg.JWTPrivateKey, cfg.JWTPublicKey)
+	}
 	if err != nil {
 		slog.Warn("auth service not fully initialized", "error", err)
 	}
@@ -81,6 +86,12 @@ func run() error {
 	apiServer := api.NewServer(pool, bus, visionSvc, identitySvc, authSvc, api.APIConfig{
 		AllowedOrigins: cfg.AllowedOrigins,
 	})
+
+	// Wire Telegram alerts (dry-run if not configured)
+	tgSender := alerts.New(cfg.TelegramBotToken, cfg.TelegramChatID)
+	tgSender.Subscribe(bus)
+	slog.Info("telegram alerts wired", "configured", cfg.TelegramBotToken != "")
+
 	handler := apiServer.Router()
 
 	// Also expose the observability health endpoint alongside the API routes.
@@ -89,7 +100,7 @@ func run() error {
 	mux.Handle("/", handler)
 
 	srv := &http.Server{
-		Addr:    ":" + cfg.HTTPPort,
+		Addr:    ":" + cfg.Port,
 		Handler: mux,
 	}
 
