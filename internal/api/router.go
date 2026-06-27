@@ -20,7 +20,9 @@ import (
 	"github.com/sambawy01/Retail-Compliance-System/internal/tenant"
 	"github.com/sambawy01/Retail-Compliance-System/internal/vision"
 	"github.com/sambawy01/Retail-Compliance-System/internal/webrtc"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/sambawy01/Retail-Compliance-System/pkg/database"
 )
 
 // Server holds all services and wires the HTTP routes.
@@ -342,6 +344,7 @@ func (s *Server) logoutHandler(w http.ResponseWriter, r *http.Request) {
 // meHandler returns the current authenticated user's info.
 // Returns the same shape as loginHandler so the frontend AuthContext
 // can use the user object consistently after login and after refresh.
+// Uses TenantTx so RLS policies allow reading the users table.
 func (s *Server) meHandler(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value(userCtxKey{}).(string)
 	role, _ := r.Context().Value(roleCtxKey{}).(string)
@@ -351,9 +354,11 @@ func (s *Server) meHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var email, displayName string
-	err = s.pool.QueryRow(r.Context(),
-		`SELECT email, display_name FROM users WHERE user_id = `, userID,
-	).Scan(&email, &displayName)
+	err = database.TenantTx(r.Context(), s.pool, func(ctx context.Context, tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT email, display_name FROM users WHERE user_id = $1`, userID,
+		).Scan(&email, &displayName)
+	})
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "user not found")
 		return
