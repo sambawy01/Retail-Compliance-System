@@ -150,7 +150,8 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Vary", "Origin")
 			} else {
-				w.Header().Set("Access-Control-Allow-Origin", "*")
+				// No Origin header — not a CORS request. Skip Allow-Origin entirely
+				// to avoid returning "*" alongside Allow-Credentials: true (spec violation).
 			}
 		} else {
 			// Specific origins configured — always set the first one.
@@ -299,14 +300,17 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Set httpOnly cookie — not accessible to JavaScript, prevents XSS token theft
 	// SameSite=None + Secure=true required for cross-origin (Vercel→Railway) cookie sending.
-	// Railway terminates TLS at proxy so r.TLS is nil — use X-Forwarded-Proto instead.
-	isHTTPS := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+	// Both Railway and Vercel terminate TLS at their proxy, so r.TLS is always nil and
+	// X-Forwarded-Proto is unreliable on Railway's hikari proxy. Since production is
+	// always HTTPS, we unconditionally set Secure=true. Without Secure, Go net/http
+	// silently downgrades SameSite=None to SameSite=Lax, which browsers then withhold
+	// on cross-site fetch requests — breaking the entire auth flow.
 	http.SetCookie(w, &http.Cookie{
 		Name:     "watchdog_session",
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   isHTTPS,
+		Secure:   true,
 		SameSite: http.SameSiteNoneMode,
 		MaxAge:   86400, // 24h
 	})
@@ -323,13 +327,12 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 
 // logoutHandler clears the session cookie.
 func (s *Server) logoutHandler(w http.ResponseWriter, r *http.Request) {
-	isHTTPS := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 	http.SetCookie(w, &http.Cookie{
 		Name:     "watchdog_session",
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   isHTTPS,
+		Secure:   true,
 		SameSite: http.SameSiteNoneMode,
 		MaxAge:   -1, // immediately expire
 	})

@@ -79,8 +79,8 @@ func TestCORSMiddleware(t *testing.T) {
 		wantOrigin     string
 	}{
 		{"custom origins", "https://example.com", "https://example.com"},
-		{"empty defaults to *", "", "*"},
-		{"wildcard", "*", "*"},
+		{"empty no origin", "", ""},
+		{"wildcard no origin", "*", ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
