@@ -45,10 +45,10 @@ export default function TopBar() {
         {user && (
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-bg-hover border border-border">
             <div className="w-7 h-7 rounded-full bg-accent text-white flex items-center justify-center text-xs font-bold">
-              {(user.name || user.email || '?').charAt(0).toUpperCase()}
+              {(user.display_name || user.email || '?').charAt(0).toUpperCase()}
             </div>
             <span className="text-sm text-text-secondary hidden sm:inline max-w-[140px] truncate">
-              {user.name || user.email}
+              {user.display_name || user.email}
             </span>
           </div>
         )}

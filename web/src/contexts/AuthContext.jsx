@@ -13,7 +13,10 @@ export function AuthProvider({ children }) {
     let active = true
     api.get('/auth/me')
       .then((res) => {
-        if (active && res.data) setUser(res.data)
+        if (active && res.data) {
+          const u = res.data.user || res.data
+          setUser(u)
+        }
       })
       .catch(() => {
         // 401 is expected when not logged in — just set user null

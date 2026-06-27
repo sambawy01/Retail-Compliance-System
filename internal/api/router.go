@@ -339,7 +339,9 @@ func (s *Server) logoutHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// meHandler returns the current authenticated user's info from the JWT claims.
+// meHandler returns the current authenticated user's info.
+// Returns the same shape as loginHandler so the frontend AuthContext
+// can use the user object consistently after login and after refresh.
 func (s *Server) meHandler(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value(userCtxKey{}).(string)
 	role, _ := r.Context().Value(roleCtxKey{}).(string)
@@ -348,10 +350,22 @@ func (s *Server) meHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid context")
 		return
 	}
+	var email, displayName string
+	err = s.pool.QueryRow(r.Context(),
+		`SELECT email, display_name FROM users WHERE user_id = `, userID,
+	).Scan(&email, &displayName)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "user not found")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"user_id": userID,
-		"role":    role,
-		"org_id":  orgID.String(),
+		"user": map[string]any{
+			"user_id":      userID,
+			"email":        email,
+			"display_name": displayName,
+			"role":         role,
+			"org_id":       orgID.String(),
+		},
 	})
 }
 
