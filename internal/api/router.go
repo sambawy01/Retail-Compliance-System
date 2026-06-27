@@ -317,6 +317,7 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   86400, // 24h
 	})
 	writeJSON(w, http.StatusOK, map[string]any{
+		"token": token,
 		"user": map[string]any{
 			"user_id":      userID,
 			"email":        body.Email,

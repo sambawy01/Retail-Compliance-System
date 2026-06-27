@@ -1,6 +1,7 @@
 import axios from 'axios'
 
 const baseURL = (import.meta.env.VITE_API_URL || '') + '/api/v1'
+const TOKEN_KEY='***'
 
 const api = axios.create({
   baseURL,
@@ -9,18 +10,25 @@ const api = axios.create({
   withCredentials: true,
 })
 
+// Request interceptor: attach Bearer token from localStorage to every request
+// Cookie may not work cross-site (third-party cookie blocking by browsers),
+// so we use Bearer token auth as the primary mechanism
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem(TOKEN_KEY)
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
+
 // Auto-logout on 401 — but skip redirect for auth endpoints
-// (AuthContext catches /auth/me 401s gracefully and sets user=null)
 api.interceptors.response.use(
   (res) => res,
   (err) => {
     if (err.response && err.response.status === 401) {
       const url = err.config?.url || ''
       if (!url.includes('/auth/me') && !url.includes('/auth/login') && !url.includes('/auth/logout')) {
-        localStorage.removeItem('watchdog_token')
-        localStorage.removeItem('watchdog_user')
-        localStorage.removeItem('watchdog_rules')
-        localStorage.removeItem('watchdog_org')
+        localStorage.removeItem(TOKEN_KEY)
         if (!window.location.pathname.endsWith('/login')) {
           window.location.href = '/login'
         }
