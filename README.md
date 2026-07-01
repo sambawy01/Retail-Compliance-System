@@ -1,62 +1,123 @@
 # Watch Dog — Retail Compliance System
 
-Enterprise-grade CCTV compliance monitoring for retail stores. Live WebRTC
-streaming, face ID with PDP Law compliance, 16 retail event types, bilingual
-dashboard (EN/AR).
+AI-powered retail compliance monitoring with computer vision, face recognition,
+staff performance tracking, and real-time event alerts.
 
 ## Architecture
 
+- **Backend**: Go 1.25, chi router, pgx/v5, JWT RS256 auth, Postgres with Row-Level Security
+- **Frontend**: React 18, Vite 5, TailwindCSS, i18n (EN/AR), RTL support
+- **Edge Agent**: Python, YOLO detection, ArcFace recognition, RTSP ingestion, WebRTC publishing
+- **Database**: Supabase Postgres (Paris) with pgvector for biometric embeddings
+- **Deploy**: Railway (backend), Vercel (frontend)
+
+## Quick Start
+
+### Prerequisites
+- Go 1.25+
+- Node.js 20+
+- PostgreSQL with pgvector extension
+
+### Backend
+```bash
+# Set required environment variables
+export DB_HOST=your-db-host
+export DB_PORT=5432
+export DB_USER=postgres
+export DB_PASSWORD=your-password
+export JWT_PRIVATE_KEY_B64=your-base64-private-key
+export JWT_PUBLIC_KEY_B64=your-base64-public-key
+export ENV=production
+export ALLOWED_ORIGINS=https://your-frontend.vercel.app
+
+# Run (migrations auto-apply on startup)
+go run ./cmd/server
 ```
-IP Cameras (Hikvision/Dahua)
-  ↓ RTSP
-Edge Agent (Python, Pi 5/Jetson)
-  ↓ detections + WebRTC stream + heartbeat
-Go Backend (Railway)
-  ↓ REST API + WebSocket
-React Dashboard (Vercel) — bilingual EN/AR
-  ↓ alerts
-Telegram Bot → management
+
+### Frontend
+```bash
+cd web
+npm install
+npm run dev  # dev server at localhost:5173
+npm run build  # production build
+npm run test  # run vitest
 ```
 
-## Stack
+## API
 
-| Component | Tech |
-|---|---|
-| Backend | Go 1.25, chi router, pgx/v5 |
-| Database | Postgres 16 + pgvector (Neon) |
-| Cache | Redis 7 |
-| Edge agent | Python (YOLO, ArcFace, aiortc) |
-| Frontend | React + Vite + Tailwind |
-| Clip storage | Backblaze B2 (S3-compatible) |
-| Live streaming | WebRTC (aiortc ↔ browser) |
-| Deploy | Railway (backend), Vercel (frontend) |
+Base URL: `/api/v1/`
 
-## Event types (16)
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check (no auth) |
+| `/auth/login` | POST | Login with email/password |
+| `/auth/me` | GET | Current user info |
+| `/auth/refresh` | POST | Refresh JWT token |
+| `/auth/logout` | POST | Clear session |
+| `/vision/cameras` | GET/POST | List/create cameras |
+| `/vision/cameras/{id}` | GET/PATCH/DELETE | Camera CRUD |
+| `/vision/zones` | GET/POST | Zone management |
+| `/vision/detections` | GET/POST | Detection events |
+| `/vision/clips` | GET/POST | Video clips |
+| `/identity/persons` | GET/POST | Staff enrollment |
+| `/identity/persons/{id}` | GET/DELETE | Person details/revoke |
+| `/identity/persons/{id}/consent` | GET/POST | Consent records |
+| `/identity/persons/{id}/templates` | POST | Biometric embeddings |
+| `/identity/match` | POST | Face matching |
+| `/identity/audit` | GET | Access audit log |
+| `/staff/` | GET | Staff performance profiles |
+| `/staff/{id}` | GET | Individual staff profile |
+| `/staff/{id}/report` | GET | AI-generated performance report |
+| `/staff/{id}/attendance` | GET/POST | Attendance records |
+| `/staff/{id}/holidays` | GET/POST | Leave management |
+| `/notifications/rules` | GET/POST/PATCH/DELETE | Notification rules |
+| `/webrtc/offer` | POST | WebRTC signaling |
+| `/webrtc/turn` | POST | TURN credentials |
 
-**Critical:** slip\_fall, cash\_drawer, after\_hours, buddy\_punch, blocked\_exit
-**Warning:** uniform\_violation, hygiene\_violation, phone\_usage, cleanliness\_alert, checkout\_bottleneck, stockroom\_anomaly, loitering, camera\_degraded
-**Info:** loyalty\_recognized, occupancy\_update, activity\_update
+## Database Migrations
 
-## Zones (8)
+Migrations are embedded in the binary and run automatically on startup.
+Files are in `internal/migrations/versions/*.sql` and tracked in `schema_migrations` table.
 
-checkout, aisles, stockroom, back\_office, entrance, restroom, restricted, privacy\_mask
+To add a new migration:
+1. Create `internal/migrations/versions/002_description.sql`
+2. Use `IF NOT EXISTS` for idempotency
+3. The binary auto-applies on next deploy
 
-## Face ID
+## Environment Variables
 
-Full identity stack with Egypt PDP Law (No. 151/2020) compliance:
-- Encrypted face embeddings (AES-256-GCM + pgvector)
-- Consent management (bilingual EN/AR)
-- Access audit trail
-- Erasure log
-- Per-tenant data encryption keys
+### Backend
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DB_HOST` | Yes* | Database host (or use DATABASE_URL) |
+| `DB_PORT` | No | Database port (default: 6543) |
+| `DB_USER` | No | Database user (default: postgres) |
+| `DB_PASSWORD` | Yes* | Database password |
+| `DATABASE_URL` | Yes* | Full connection string (alternative to DB_*) |
+| `JWT_PRIVATE_KEY_B64` | Yes | Base64-encoded RSA private key |
+| `JWT_PUBLIC_KEY_B64` | Yes | Base64-encoded RSA public key |
+| `ENV` | No | Environment (development/production) |
+| `ALLOWED_ORIGINS` | No | Comma-separated CORS origins (default: *) |
+| `PORT` | No | HTTP port (default: 8080) |
+| `LOG_LEVEL` | No | Log level (default: info) |
+| `TELEGRAM_BOT_TOKEN` | No | Telegram alerts bot token |
+| `TELEGRAM_CHAT_ID` | No | Telegram alerts chat ID |
 
-## Development
+### Frontend
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `VITE_API_URL` | Yes | Backend API base URL |
+
+## Testing
 
 ```bash
-docker compose up -d     # start Postgres + Redis
-go run ./cmd/server      # start backend
+# Backend
+go test -v -race ./...
+
+# Frontend
+cd web && npm run test
 ```
 
 ## License
 
-Proprietary. © 2026 Hany Sadek.
+Proprietary. All rights reserved.

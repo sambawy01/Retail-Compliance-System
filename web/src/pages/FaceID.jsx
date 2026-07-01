@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useLang } from '../contexts/LanguageContext'
 import { apiGet, apiPost, api } from '../services/api'
+import { reportError } from '../services/errors'
 import { fmtDate } from '../services/constants'
 import { ScanFace, UserPlus, X, ShieldCheck, FileText, Ban, ChevronDown, ChevronUp, Camera, Upload, Phone, Briefcase, CheckCircle, Loader2, AlertCircle } from 'lucide-react'
 
@@ -40,7 +41,7 @@ export default function FaceID() {
       const d = await apiGet.persons('')
       const arr = Array.isArray(d) ? d : d.items || d.persons || []
       setPersons(arr)
-    } catch { /* ignore */ }
+    } catch (e) { reportError(e, 'loading persons') }
     if (isRefresh) setRefreshing(false)
     else setLoading(false)
   }, [])
@@ -80,7 +81,7 @@ export default function FaceID() {
     try {
       await api.delete(`/identity/persons/${p.id || p.person_id}`)
       load(true)
-    } catch { /* ignore */ }
+    } catch (e) { reportError(e, 'loading persons') }
   }
 
   const toggleConsent = async (p) => {
@@ -90,11 +91,11 @@ export default function FaceID() {
     try {
       const res = await api.get(`/identity/persons/${pid}/consent`)
       setConsent((s) => ({ ...s, [pid]: res.data }))
-    } catch { setConsent((s) => ({ ...s, [pid]: null })) }
+    } catch (e) { reportError(e, 'fetching consent'); setConsent((s) => ({ ...s, [pid]: null })) }
     try {
       const res = await api.get(`/identity/persons/${pid}/audit`)
       setAudit((s) => ({ ...s, [pid]: Array.isArray(res.data) ? res.data : res.data.items || [] }))
-    } catch { setAudit((s) => ({ ...s, [pid]: [] })) }
+    } catch (e) { reportError(e, 'fetching audit'); setAudit((s) => ({ ...s, [pid]: [] })) }
   }
 
   const kindLabel = (k) => t(`faceid.kind${k ? k.charAt(0).toUpperCase() + k.slice(1) : ''}`, k || '')

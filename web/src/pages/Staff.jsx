@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useLang } from '../contexts/LanguageContext'
 import { apiGet } from '../services/api'
-import { fmtDate, severityOf, sevColor } from '../services/constants'
+import { reportError } from '../services/errors'
+import { fmtDate } from '../services/constants'
 import { Users, Gauge, Clock, Calendar, FileText, Phone, Briefcase, TrendingUp, AlertTriangle, CheckCircle, XCircle, Loader2, ChevronDown, ChevronUp, Award, UserX } from 'lucide-react'
 
 export default function Staff() {
@@ -19,7 +20,7 @@ export default function Staff() {
       const d = await apiGet.staff()
       const arr = Array.isArray(d) ? d : d.staff || []
       setStaff(arr)
-    } catch { /* ignore */ }
+    } catch (e) { reportError(e, 'loading staff') }
     setLoading(false)
   }, [])
 
@@ -31,7 +32,7 @@ export default function Staff() {
     try {
       const d = await apiGet.staffReport(personId)
       setReport(d.report || '')
-    } catch { /* ignore */ }
+    } catch (e) { reportError(e, 'loading staff') }
     setReportLoading(false)
   }
 

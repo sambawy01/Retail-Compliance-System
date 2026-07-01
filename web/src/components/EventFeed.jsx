@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useLang } from '../contexts/LanguageContext'
 import { apiGet, connectWebSocket } from '../services/api'
+import { reportError } from '../services/errors'
 import { sevColor, severityOf, fmtTime } from '../services/constants'
 import { Activity } from 'lucide-react'
 
@@ -18,7 +19,7 @@ export default function EventFeed({ limit = 20, cameraId }) {
       const data = await apiGet.detections({ camera_id: cameraId, limit })
       const arr = Array.isArray(data) ? data : data.items || data.detections || []
       setEvents(arr.slice(0, limit))
-    } catch { /* ignore — keep last state */ }
+    } catch (e) { reportError(e, 'fetching events') }
   }, [cameraId, limit])
 
   useEffect(() => {
