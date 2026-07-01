@@ -3,6 +3,7 @@ package vision
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -27,6 +28,15 @@ var ErrZoneNotFound = errors.New("vision: zone not found")
 // CreateZone inserts a new zone row.
 func (s *Service) CreateZone(ctx context.Context, in CreateZoneInput) (Zone, error) {
 	var z Zone
+	// Marshal polygon to JSON bytes for pgx jsonb encoding
+	var polygonBytes []byte
+	if in.Polygon != nil {
+		var err error
+		polygonBytes, err = json.Marshal(in.Polygon)
+		if err != nil {
+			return Zone{}, fmt.Errorf("vision: marshal polygon: %w", err)
+		}
+	}
 	err := database.TenantTx(ctx, s.pool, func(ctx context.Context, tx pgx.Tx) error {
 		z = Zone{
 			ZoneID:   uuid.New(),
@@ -41,7 +51,7 @@ func (s *Service) CreateZone(ctx context.Context, in CreateZoneInput) (Zone, err
 			VALUES ($1, current_setting('app.current_org_id', true)::uuid, $2, $3, $4, $5, $6)
 			RETURNING created_at`
 		return tx.QueryRow(ctx, q,
-			z.ZoneID, z.CameraID, z.Name, z.Kind, z.Polygon, z.Capacity,
+			z.ZoneID, z.CameraID, z.Name, z.Kind, polygonBytes, z.Capacity,
 		).Scan(&z.CreatedAt)
 	})
 	if err != nil {

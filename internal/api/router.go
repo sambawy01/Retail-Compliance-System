@@ -489,6 +489,7 @@ func (s *Server) updateCamera(w http.ResponseWriter, r *http.Request) {
 func (s *Server) deleteCamera(w http.ResponseWriter, r *http.Request) {
 	cameraID := chi.URLParam(r, "cameraID")
 	if err := s.vision.DeleteCamera(r.Context(), cameraID); err != nil {
+		slog.Error("delete_camera_failed", "error", err, "camera_id", cameraID)
 		writeError(w, http.StatusInternalServerError, "failed to delete camera")
 		return
 	}
@@ -531,6 +532,7 @@ func (s *Server) createZone(w http.ResponseWriter, r *http.Request) {
 	}
 	z, err := s.vision.CreateZone(r.Context(), in)
 	if err != nil {
+		slog.Error("create_zone_failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to create zone")
 		return
 	}
