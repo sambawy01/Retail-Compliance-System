@@ -3,6 +3,7 @@
 // These tests verify the full HTTP stack: routing, auth, RLS, and DB operations.
 //
 // Prerequisites: Docker must be available on the test runner.
+// Run: go get github.com/testcontainers/testcontainers-go github.com/testcontainers/testcontainers-go/modules/postgres
 // Run: go test -v -tags integration ./internal/api/...
 //
 //go:build integration

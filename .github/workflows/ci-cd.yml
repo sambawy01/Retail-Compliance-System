@@ -54,6 +54,9 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      - name: Install testcontainers for integration tests
+        run: go get github.com/testcontainers/testcontainers-go github.com/testcontainers/testcontainers-go/modules/postgres
+
       - name: Integration tests
         run: go test -v -race -tags integration ./internal/api/...
 
