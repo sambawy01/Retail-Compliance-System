@@ -68,15 +68,19 @@ func (s *Server) Router() http.Handler {
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
 	r.Use(s.corsMiddleware)
+	r.Use(s.securityHeadersMiddleware)
+	r.Use(s.requestIDResponseMiddleware)
+	r.Use(s.maxBodyMiddleware)
 
 	// Health — no auth
 	r.Get("/health", s.healthHandler)
 
 	// Auth — no auth required for login
+	loginLimiter := NewRateLimiter(0.1, 5) // 5 requests burst, refill 1 per 10s
 	r.Route("/api/v1/auth", func(r chi.Router) {
-		r.Post("/login", s.loginHandler)
+		r.With(RateLimit(loginLimiter)).Post("/login", s.loginHandler)
 		r.Post("/logout", s.logoutHandler)
-		r.Post("/refresh", s.refreshHandler)
+		r.With(RateLimit(NewRateLimiter(0.5, 10))).Post("/refresh", s.refreshHandler)
 	})
 	// /me endpoint — requires auth, returns current user info
 	r.With(s.authMiddleware).Get("/api/v1/auth/me", s.meHandler)
@@ -300,14 +304,15 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 		body.Email,
 	).Scan(&userID, &dbOrgID, &role, &displayName, &dbPasswordHash)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, fmt.Sprintf("lookup error: %v", err))
+		slog.Error("login_lookup_failed", "error", err, "email", body.Email)
+		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
 
 	// Verify password with bcrypt (constant-time comparison)
 	if err := bcryptCompare([]byte(dbPasswordHash), []byte(body.Password)); err != nil {
-		slog.Error("login_bcrypt_failed", "email", body.Email, "hash_len", len(dbPasswordHash), "error", err)
-		writeError(w, http.StatusUnauthorized, "invalid credentials - bcrypt failed")
+		slog.Error("login_bcrypt_failed", "email", body.Email, "error", err)
+		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
 

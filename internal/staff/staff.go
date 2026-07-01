@@ -90,6 +90,8 @@ func New(pool *database.Pool) *Service {
 }
 
 // ListStaff returns all enrolled staff with aggregated performance stats.
+// Uses batch queries instead of N+1 pattern — one query for persons, one for
+// all their stats, one for all attendance, one for all holidays.
 func (s *Service) ListStaff(ctx context.Context) ([]StaffProfile, error) {
 	var out []StaffProfile
 	err := database.TenantTx(ctx, s.pool, func(ctx context.Context, tx pgx.Tx) error {
@@ -120,13 +122,24 @@ func (s *Service) ListStaff(ctx context.Context) ([]StaffProfile, error) {
 	if err != nil {
 		return nil, fmt.Errorf("staff: list: %w", err)
 	}
-
-	// Aggregate stats for each person
-	for i := range out {
-		s.aggregateStats(ctx, &out[i])
-		s.aggregateAttendance(ctx, &out[i])
-		s.loadHolidays(ctx, &out[i])
+	if len(out) == 0 {
+		return out, nil
 	}
+
+	// Collect all person IDs for batch queries
+	personIDs := make([]string, len(out))
+	for i := range out {
+		personIDs[i] = out[i].PersonID
+	}
+
+	// Batch: event counts by person and severity (single query)
+	s.batchAggregateStats(ctx, personIDs, &out)
+
+	// Batch: attendance summary (single query)
+	s.batchAggregateAttendance(ctx, personIDs, &out)
+
+	// Batch: holidays (single query)
+	s.batchLoadHolidays(ctx, personIDs, &out)
 
 	return out, nil
 }
@@ -232,6 +245,181 @@ func (s *Service) aggregateStats(ctx context.Context, p *StaffProfile) {
 		score = 100
 	}
 	p.PerformanceScore = score
+}
+
+// batchAggregateStats runs a SINGLE query to get event counts for ALL persons.
+func (s *Service) batchAggregateStats(ctx context.Context, personIDs []string, out *[]StaffProfile) {
+	if len(personIDs) == 0 {
+		return
+	}
+	// Build a map for quick lookup
+	profileMap := make(map[string]*StaffProfile, len(*out))
+	for i := range *out {
+		profileMap[(*out)[i].PersonID] = &(*out)[i]
+	}
+
+	err := database.TenantTx(ctx, s.pool, func(ctx context.Context, tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT
+				COALESCE(payload->>'person_id', payload->>'matched_person') as pid,
+				severity,
+				COUNT(*) as cnt
+			FROM vision_detections
+			WHERE payload->>'person_id' = ANY($1)
+			   OR payload->>'matched_person' = ANY($1)
+			GROUP BY pid, severity`, personIDs)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var pid, sev string
+			var count int
+			if err := rows.Scan(&pid, &sev, &count); err != nil {
+				return err
+			}
+			p, ok := profileMap[pid]
+			if !ok {
+				continue
+			}
+			switch sev {
+			case "critical":
+				p.CriticalEvents = count
+			case "warning":
+				p.WarningEvents = count
+			case "info":
+				p.InfoEvents = count
+			}
+			p.TotalEvents += count
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return
+	}
+
+	// Compute scores
+	for i := range *out {
+		p := &(*out)[i]
+		score := 100.0
+		score -= float64(p.CriticalEvents) * 15
+		score -= float64(p.WarningEvents) * 5
+		score -= float64(p.InfoEvents) * 1
+		if score < 0 {
+			score = 0
+		}
+		if score > 100 {
+			score = 100
+		}
+		p.PerformanceScore = score
+	}
+}
+
+// batchAggregateAttendance runs a SINGLE query for all persons' attendance.
+func (s *Service) batchAggregateAttendance(ctx context.Context, personIDs []string, out *[]StaffProfile) {
+	if len(personIDs) == 0 {
+		return
+	}
+	profileMap := make(map[string]*StaffProfile, len(*out))
+	for i := range *out {
+		profileMap[(*out)[i].PersonID] = &(*out)[i]
+	}
+
+	err := database.TenantTx(ctx, s.pool, func(ctx context.Context, tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT person_id,
+				COUNT(*) FILTER (WHERE status = 'present') as present,
+				COUNT(*) FILTER (WHERE status = 'late') as late,
+				COUNT(*) FILTER (WHERE status = 'absent') as absent,
+				COUNT(*) FILTER (WHERE status = 'half_day') as half,
+				COUNT(*) FILTER (WHERE status = 'remote') as remote,
+				COUNT(*) as total,
+				COALESCE(SUM(late_minutes), 0) as late_mins,
+				COALESCE(SUM(overtime_minutes), 0) as ot_mins
+			FROM staff_attendance
+			WHERE person_id = ANY($1) AND date >= NOW() - INTERVAL '30 days'
+			GROUP BY person_id`, personIDs)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var pid string
+			var present, late, absent, half, remote, total, lateMins, otMins int
+			if err := rows.Scan(&pid, &present, &late, &absent, &half, &remote, &total, &lateMins, &otMins); err != nil {
+				return err
+			}
+			p, ok := profileMap[pid]
+			if !ok {
+				continue
+			}
+			p.Attendance = AttendanceSummary{
+				PresentDays:    present,
+				LateDays:       late,
+				AbsentDays:     absent,
+				HalfDays:       half,
+				RemoteDays:     remote,
+				TotalDays:      total,
+				LateMinutes:    lateMins,
+				OvertimeMins:   otMins,
+			}
+			if total > 0 {
+				p.Attendance.AttendanceRate = float64(present+remote+half) / float64(total) * 100
+			} else {
+				p.Attendance.AttendanceRate = 100
+			}
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return
+	}
+}
+
+// batchLoadHolidays runs a SINGLE query for all persons' holidays.
+func (s *Service) batchLoadHolidays(ctx context.Context, personIDs []string, out *[]StaffProfile) {
+	if len(personIDs) == 0 {
+		return
+	}
+	profileMap := make(map[string]*StaffProfile, len(*out))
+	for i := range *out {
+		profileMap[(*out)[i].PersonID] = &(*out)[i]
+	}
+
+	err := database.TenantTx(ctx, s.pool, func(ctx context.Context, tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT person_id, holiday_id, start_date, end_date, type, status, reason
+			FROM staff_holidays
+			WHERE person_id = ANY($1)
+			ORDER BY start_date DESC`, personIDs)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var pid, hid, htype, status, reason string
+			var start, end time.Time
+			if err := rows.Scan(&pid, &hid, &start, &end, &htype, &status, &reason); err != nil {
+				return err
+			}
+			p, ok := profileMap[pid]
+			if !ok {
+				continue
+			}
+			p.Holidays = append(p.Holidays, Holiday{
+				HolidayID: hid,
+				StartDate: start,
+				EndDate:   end,
+				Type:      htype,
+				Status:    status,
+				Reason:    reason,
+			})
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return
+	}
 }
 
 // aggregateAttendance loads attendance summary for the last 30 days.
