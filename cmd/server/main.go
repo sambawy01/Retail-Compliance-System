@@ -14,7 +14,6 @@ import (
 	"syscall"
 	"time"
 
-
 	"github.com/sambawy01/Retail-Compliance-System/internal/alerts"
 	"github.com/sambawy01/Retail-Compliance-System/internal/api"
 	"github.com/sambawy01/Retail-Compliance-System/internal/auth"

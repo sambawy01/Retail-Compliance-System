@@ -5,16 +5,11 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"log/slog"
 	"net/http"
-	"time"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/google/uuid"
 	"github.com/sambawy01/Retail-Compliance-System/internal/auth"
 	"github.com/sambawy01/Retail-Compliance-System/internal/event"
 	"github.com/sambawy01/Retail-Compliance-System/internal/identity"
@@ -23,22 +18,21 @@ import (
 	"github.com/sambawy01/Retail-Compliance-System/internal/tenant"
 	"github.com/sambawy01/Retail-Compliance-System/internal/vision"
 	"github.com/sambawy01/Retail-Compliance-System/internal/webrtc"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/sambawy01/Retail-Compliance-System/pkg/database"
 )
 
 // Server holds all services and wires the HTTP routes.
 type Server struct {
-	pool          *pgxpool.Pool
-	bus           *event.Bus
-	vision        *vision.Service
-	identity      *identity.Service
-	auth          *auth.Service
-	notifications *notifications.Service
-	staff         *staff.Service
-	signaling     *webrtc.SignalingServer
-	cfg           APIConfig
+	pool           *pgxpool.Pool
+	bus            *event.Bus
+	vision         *vision.Service
+	identity       *identity.Service
+	auth           *auth.Service
+	notifications  *notifications.Service
+	staff          *staff.Service
+	signaling      *webrtc.SignalingServer
+	cfg            APIConfig
+	loginTracker   *LoginAttemptTracker
 }
 
 // APIConfig holds API-level configuration.
@@ -49,15 +43,16 @@ type APIConfig struct {
 // NewServer creates the API server with all dependencies.
 func NewServer(pool *pgxpool.Pool, bus *event.Bus, vs *vision.Service, ids *identity.Service, authSvc *auth.Service, notifSvc *notifications.Service, staffSvc *staff.Service, sig *webrtc.SignalingServer, cfg APIConfig) *Server {
 	return &Server{
-		pool:          pool,
-		bus:           bus,
-		vision:        vs,
-		identity:      ids,
-		auth:          authSvc,
+		pool:         pool,
+		bus:          bus,
+		vision:       vs,
+		identity:     ids,
+		auth:         authSvc,
 		notifications: notifSvc,
-		staff:         staffSvc,
-		signaling:     sig,
-		cfg:           cfg,
+		staff:        staffSvc,
+		signaling:    sig,
+		cfg:          cfg,
+		loginTracker: NewLoginAttemptTracker(5, 900), // 5 failures, 15min lock
 	}
 }
 
@@ -68,17 +63,21 @@ func (s *Server) Router() http.Handler {
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
 	r.Use(s.corsMiddleware)
+	r.Use(s.securityHeadersMiddleware)
+	r.Use(s.requestIDResponseMiddleware)
+	r.Use(s.maxBodyMiddleware)
 
 	// Health — no auth
 	r.Get("/health", s.healthHandler)
 
 	// Auth — no auth required for login
+	loginLimiter := NewRateLimiter(0.1, 5) // 5 requests burst, refill 1 per 10s
 	r.Route("/api/v1/auth", func(r chi.Router) {
-		r.Post("/login", s.loginHandler)
+		r.With(RateLimit(loginLimiter)).Post("/login", s.loginHandler)
 		r.Post("/logout", s.logoutHandler)
-		r.Post("/refresh", s.refreshHandler)
+		r.With(RateLimit(NewRateLimiter(0.5, 10))).Post("/refresh", s.refreshHandler)
 	})
-	// /me endpoint — requires auth, returns current user info
+	// /me endpoint — requires auth
 	r.With(s.authMiddleware).Get("/api/v1/auth/me", s.meHandler)
 
 	// Everything else requires JWT auth
@@ -168,18 +167,11 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 		origin := r.Header.Get("Origin")
 		allowed := s.cfg.AllowedOrigins
 		if allowed == "" || allowed == "*" {
-			// In credentials mode, we can't use wildcard. Reflect the origin
-			// if it's present, otherwise allow all (no credentials).
 			if origin != "" {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Vary", "Origin")
-			} else {
-				// No Origin header — not a CORS request. Skip Allow-Origin entirely
-				// to avoid returning "*" alongside Allow-Credentials: true (spec violation).
 			}
 		} else {
-			// Specific origins configured — always set the first one.
-			// If Origin header matches, reflect it. Otherwise set the configured origin.
 			matched := false
 			for _, o := range strings.Split(allowed, ",") {
 				if strings.TrimSpace(o) == origin {
@@ -190,7 +182,6 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 				}
 			}
 			if !matched {
-				// No Origin header or not in list — set the configured origin
 				w.Header().Set("Access-Control-Allow-Origin", strings.TrimSpace(strings.Split(allowed, ",")[0]))
 			}
 		}
@@ -206,10 +197,11 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+type userCtxKey struct{}
+type roleCtxKey struct{}
+
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Read token from httpOnly cookie first, then fall back to Bearer header
-		// (Bearer header is for edge agent / API clients that can't use cookies)
 		var token string
 		if cookie, err := r.Cookie("watchdog_session"); err == nil && cookie.Value != "" {
 			token = cookie.Value
@@ -224,7 +216,6 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		if s.auth == nil {
-			slog.Error("auth service not initialized — rejecting request")
 			writeError(w, http.StatusServiceUnavailable, "authentication service unavailable")
 			return
 		}
@@ -233,7 +224,6 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "invalid token")
 			return
 		}
-		// Inject org_id, user_id, and role into context for RLS + RBAC
 		ctx, err := tenant.WithOrgIDString(r.Context(), claims.OrgID)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "invalid org_id in token")
@@ -245,11 +235,6 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-type userCtxKey struct{}
-type roleCtxKey struct{}
-
-// requireRole returns middleware that checks the JWT role claim.
-// Pass allowed roles; if the user's role is not in the set, 403.
 func (s *Server) requireRole(roles ...string) func(http.Handler) http.Handler {
 	allowed := make(map[string]bool, len(roles))
 	for _, r := range roles {
@@ -265,890 +250,6 @@ func (s *Server) requireRole(roles ...string) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
-}
-
-// --- Handlers ---
-
-func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status":  "ok",
-		"service": "watch-dog",
-		"version": "0.1.0",
-	})
-}
-
-func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	if body.Email == "" || body.Password == "" {
-		writeError(w, http.StatusBadRequest, "email and password required")
-		return
-	}
-
-	// Use SECURITY DEFINER function to look up user by email (bypasses RLS safely)
-	// Returns password_hash for Go-side bcrypt verification
-	ctx := context.Background()
-	var userID, dbOrgID, role, displayName, dbPasswordHash string
-	err := s.pool.QueryRow(ctx,
-		`SELECT user_id, org_id, role, display_name, password_hash FROM fn_login_lookup($1)`,
-		body.Email,
-	).Scan(&userID, &dbOrgID, &role, &displayName, &dbPasswordHash)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, fmt.Sprintf("lookup error: %v", err))
-		return
-	}
-
-	// Verify password with bcrypt (constant-time comparison)
-	if err := bcryptCompare([]byte(dbPasswordHash), []byte(body.Password)); err != nil {
-		slog.Error("login_bcrypt_failed", "email", body.Email, "hash_len", len(dbPasswordHash), "error", err)
-		writeError(w, http.StatusUnauthorized, "invalid credentials - bcrypt failed")
-		return
-	}
-
-	// Generate JWT
-	if s.auth == nil {
-		writeError(w, http.StatusServiceUnavailable, "authentication service unavailable")
-		return
-	}
-	token, err := s.auth.GenerateToken(userID, dbOrgID, role)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to generate token")
-		return
-	}
-
-	// Set httpOnly cookie — not accessible to JavaScript, prevents XSS token theft
-	// SameSite=None + Secure=true required for cross-origin (Vercel→Railway) cookie sending.
-	// Both Railway and Vercel terminate TLS at their proxy, so r.TLS is always nil and
-	// X-Forwarded-Proto is unreliable on Railway's hikari proxy. Since production is
-	// always HTTPS, we unconditionally set Secure=true. Without Secure, Go net/http
-	// silently downgrades SameSite=None to SameSite=Lax, which browsers then withhold
-	// on cross-site fetch requests — breaking the entire auth flow.
-	http.SetCookie(w, &http.Cookie{
-		Name:     "watchdog_session",
-		Value:    token,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteNoneMode,
-		MaxAge:   86400, // 24h
-	})
-	writeJSON(w, http.StatusOK, map[string]any{
-		"token": token,
-		"user": map[string]any{
-			"user_id":      userID,
-			"email":        body.Email,
-			"display_name": displayName,
-			"role":         role,
-			"org_id":       dbOrgID,
-		},
-	})
-}
-
-// logoutHandler clears the session cookie.
-func (s *Server) logoutHandler(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     "watchdog_session",
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteNoneMode,
-		MaxAge:   -1, // immediately expire
-	})
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// meHandler returns the current authenticated user's info.
-// Returns the same shape as loginHandler so the frontend AuthContext
-// can use the user object consistently after login and after refresh.
-// Uses TenantTx so RLS policies allow reading the users table.
-func (s *Server) meHandler(w http.ResponseWriter, r *http.Request) {
-	userID, _ := r.Context().Value(userCtxKey{}).(string)
-	role, _ := r.Context().Value(roleCtxKey{}).(string)
-	orgID, err := tenant.OrgIDFrom(r.Context())
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid context")
-		return
-	}
-	var email, displayName string
-	err = database.TenantTx(r.Context(), s.pool, func(ctx context.Context, tx pgx.Tx) error {
-		return tx.QueryRow(ctx,
-			`SELECT email, display_name FROM users WHERE user_id = $1`, userID,
-		).Scan(&email, &displayName)
-	})
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "user not found")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"user": map[string]any{
-			"user_id":      userID,
-			"email":        email,
-			"display_name": displayName,
-			"role":         role,
-			"org_id":       orgID.String(),
-		},
-	})
-}
-
-func (s *Server) refreshHandler(w http.ResponseWriter, r *http.Request) {
-	// Read the current token from cookie or Bearer header
-	var token string
-	if cookie, err := r.Cookie("watchdog_session"); err == nil && cookie.Value != "" {
-		token = cookie.Value
-	} else {
-		header := r.Header.Get("Authorization")
-		if strings.HasPrefix(header, "Bearer ") {
-			token = strings.TrimPrefix(header, "Bearer ")
-		}
-	}
-	if token == "" {
-		writeError(w, http.StatusUnauthorized, "missing authentication token")
-		return
-	}
-	if s.auth == nil {
-		writeError(w, http.StatusServiceUnavailable, "authentication service unavailable")
-		return
-	}
-	claims, err := s.auth.ValidateToken(token)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid or expired token")
-		return
-	}
-	// Issue a fresh token with a new 24h expiry
-	newToken, err := s.auth.GenerateToken(claims.UserID, claims.OrgID, claims.Role)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to generate token")
-		return
-	}
-	// Set the refreshed cookie
-	http.SetCookie(w, &http.Cookie{
-		Name:     "watchdog_session",
-		Value:    newToken,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteNoneMode,
-		MaxAge:   86400,
-	})
-	writeJSON(w, http.StatusOK, map[string]any{
-		"token": newToken,
-		"user": map[string]any{
-			"user_id": claims.UserID,
-			"role":    claims.Role,
-			"org_id":  claims.OrgID,
-		},
-	})
-}
-
-// --- Camera handlers ---
-
-func (s *Server) listCameras(w http.ResponseWriter, r *http.Request) {
-	locationID := r.URL.Query().Get("location_id")
-	cams, err := s.vision.ListCameras(r.Context(), locationID)
-	if err != nil {
-		slog.Error("list_cameras_failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to list cameras")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"cameras": cams})
-}
-
-func (s *Server) createCamera(w http.ResponseWriter, r *http.Request) {
-	var in vision.CreateCameraInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	cam, err := s.vision.CreateCamera(r.Context(), in)
-	if err != nil {
-		slog.Error("create_camera_failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to create camera")
-		return
-	}
-	writeJSON(w, http.StatusCreated, cam)
-}
-
-func (s *Server) getCamera(w http.ResponseWriter, r *http.Request) {
-	cameraID := chi.URLParam(r, "cameraID")
-	cam, err := s.vision.GetCamera(r.Context(), cameraID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "camera not found")
-		return
-	}
-	writeJSON(w, http.StatusOK, cam)
-}
-
-func (s *Server) updateCamera(w http.ResponseWriter, r *http.Request) {
-	cameraID := chi.URLParam(r, "cameraID")
-	var in vision.UpdateCameraInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	cam, err := s.vision.UpdateCamera(r.Context(), cameraID, in)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to update camera")
-		return
-	}
-	writeJSON(w, http.StatusOK, cam)
-}
-
-func (s *Server) deleteCamera(w http.ResponseWriter, r *http.Request) {
-	cameraID := chi.URLParam(r, "cameraID")
-	if err := s.vision.DeleteCamera(r.Context(), cameraID); err != nil {
-		slog.Error("delete_camera_failed", "error", err, "camera_id", cameraID)
-		writeError(w, http.StatusInternalServerError, "failed to delete camera")
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (s *Server) cameraHeartbeat(w http.ResponseWriter, r *http.Request) {
-	cameraID := chi.URLParam(r, "cameraID")
-	var body struct {
-		Status string `json:"status"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	if err := s.vision.UpdateCameraStatus(r.Context(), cameraID, vision.CameraStatus(body.Status)); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to update heartbeat")
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// --- Zone handlers ---
-
-func (s *Server) listZones(w http.ResponseWriter, r *http.Request) {
-	cameraID := r.URL.Query().Get("camera_id")
-	zones, err := s.vision.ListZones(r.Context(), cameraID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list zones")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"zones": zones})
-}
-
-func (s *Server) createZone(w http.ResponseWriter, r *http.Request) {
-	var in vision.CreateZoneInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	z, err := s.vision.CreateZone(r.Context(), in)
-	if err != nil {
-		slog.Error("create_zone_failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to create zone")
-		return
-	}
-	writeJSON(w, http.StatusCreated, z)
-}
-
-func (s *Server) deleteZone(w http.ResponseWriter, r *http.Request) {
-	zoneID := chi.URLParam(r, "zoneID")
-	if err := s.vision.DeleteZone(r.Context(), zoneID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to delete zone")
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// --- Detection handlers ---
-
-func (s *Server) listDetections(w http.ResponseWriter, r *http.Request) {
-	// Parse query params into filter
-	// TODO: parse all filter params
-	dets, err := s.vision.ListDetections(r.Context(), vision.ListDetectionsFilter{
-		CameraID:  r.URL.Query().Get("camera_id"),
-		EventType: r.URL.Query().Get("event_type"),
-		Limit:     100,
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list detections")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"detections": dets})
-}
-
-func (s *Server) insertDetection(w http.ResponseWriter, r *http.Request) {
-	var in vision.InsertDetectionInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	det, err := s.vision.InsertDetection(r.Context(), in)
-	if err != nil {
-		slog.Error("insert_detection_failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to insert detection")
-		return
-	}
-	writeJSON(w, http.StatusCreated, det)
-}
-
-// --- Clip handlers ---
-
-func (s *Server) listClips(w http.ResponseWriter, r *http.Request) {
-	cameraID := r.URL.Query().Get("camera_id")
-	if cameraID == "" {
-		// No camera filter — return empty list (ListClips requires a valid camera_id)
-		writeJSON(w, http.StatusOK, map[string]any{"clips": []any{}})
-		return
-	}
-	clips, err := s.vision.ListClips(r.Context(), cameraID, 100)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list clips")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"clips": clips})
-}
-
-func (s *Server) insertClip(w http.ResponseWriter, r *http.Request) {
-	var in vision.InsertClipInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	clip, err := s.vision.InsertClip(r.Context(), in)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to insert clip")
-		return
-	}
-	writeJSON(w, http.StatusCreated, clip)
-}
-
-func (s *Server) getClip(w http.ResponseWriter, r *http.Request) {
-	clipID := chi.URLParam(r, "clipID")
-	clip, err := s.vision.GetClip(r.Context(), clipID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "clip not found")
-		return
-	}
-	writeJSON(w, http.StatusOK, clip)
-}
-
-func (s *Server) getClipURL(w http.ResponseWriter, r *http.Request) {
-	clipID := chi.URLParam(r, "clipID")
-	clip, err := s.vision.GetClip(r.Context(), clipID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "clip not found")
-		return
-	}
-	url, err := s.vision.GeneratePresignURL(r.Context(), clip, 15)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to generate URL")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"url": url})
-}
-
-// --- Identity handlers ---
-
-func (s *Server) listPersons(w http.ResponseWriter, r *http.Request) {
-	kind := r.URL.Query().Get("kind")
-	persons, err := s.identity.ListPersons(r.Context(), kind)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list persons")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"persons": persons})
-}
-
-func (s *Server) enrollPerson(w http.ResponseWriter, r *http.Request) {
-	var in identity.EnrollPersonInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	person, err := s.identity.EnrollPerson(r.Context(), in)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to enroll person")
-		return
-	}
-	writeJSON(w, http.StatusCreated, person)
-}
-
-func (s *Server) getPerson(w http.ResponseWriter, r *http.Request) {
-	personID := chi.URLParam(r, "personID")
-	person, err := s.identity.GetPerson(r.Context(), personID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "person not found")
-		return
-	}
-	writeJSON(w, http.StatusOK, person)
-}
-
-func (s *Server) revokePerson(w http.ResponseWriter, r *http.Request) {
-	personID := chi.URLParam(r, "personID")
-	reason := r.URL.Query().Get("reason")
-	if err := s.identity.RevokePerson(r.Context(), personID, reason); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to revoke person")
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (s *Server) recordConsent(w http.ResponseWriter, r *http.Request) {
-	personID := chi.URLParam(r, "personID")
-	var in identity.ConsentInput
-	in.PersonID = personID
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	if err := s.identity.RecordConsent(r.Context(), in); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to record consent")
-		return
-	}
-	w.WriteHeader(http.StatusCreated)
-}
-
-func (s *Server) getPersonConsent(w http.ResponseWriter, r *http.Request) {
-	personID := chi.URLParam(r, "personID")
-	// Query consent records for this person via TenantTx
-	var consentRecords []map[string]any
-	err := database.TenantTx(r.Context(), s.pool, func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `
-			SELECT consent_id, consent_text, consent_locale, captured_by, captured_at, revoked, revoked_at, lawful_basis
-			FROM identity_consents WHERE person_id = $1 ORDER BY captured_at DESC`, personID)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var consentID, consentText, consentLocale, capturedBy, lawfulBasis string
-			var capturedAt time.Time
-			var revoked bool
-			var revokedAt *time.Time
-			if err := rows.Scan(&consentID, &consentText, &consentLocale, &capturedBy, &capturedAt, &revoked, &revokedAt, &lawfulBasis); err != nil {
-				return err
-			}
-			consentRecords = append(consentRecords, map[string]any{
-				"consent_id":      consentID,
-				"consent_text":    consentText,
-				"consent_locale":  consentLocale,
-				"captured_by":     capturedBy,
-				"captured_at":     capturedAt,
-				"revoked":         revoked,
-				"revoked_at":      revokedAt,
-				"lawful_basis":    lawfulBasis,
-			})
-		}
-		return rows.Err()
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to get consent records")
-		return
-	}
-	if consentRecords == nil {
-		consentRecords = []map[string]any{}
-	}
-	writeJSON(w, http.StatusOK, consentRecords)
-}
-
-func (s *Server) getPersonAudit(w http.ResponseWriter, r *http.Request) {
-	personID := chi.URLParam(r, "personID")
-	var auditRecords []map[string]any
-	err := database.TenantTx(r.Context(), s.pool, func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `
-			SELECT audit_id, purpose, triggered_by, accessed_at, camera_id
-			FROM identity_access_audit WHERE person_id = $1 ORDER BY accessed_at DESC LIMIT 100`, personID)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var auditID, purpose, triggeredBy string
-			var accessedAt time.Time
-			var cameraID *uuid.UUID
-			if err := rows.Scan(&auditID, &purpose, &triggeredBy, &accessedAt, &cameraID); err != nil {
-				return err
-			}
-			auditRecords = append(auditRecords, map[string]any{
-				"audit_id":     auditID,
-				"purpose":      purpose,
-				"triggered_by": triggeredBy,
-				"accessed_at":  accessedAt,
-				"camera_id":    cameraID,
-			})
-		}
-		return rows.Err()
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to get audit log")
-		return
-	}
-	if auditRecords == nil {
-		auditRecords = []map[string]any{}
-	}
-	writeJSON(w, http.StatusOK, auditRecords)
-}
-
-func (s *Server) insertTemplate(w http.ResponseWriter, r *http.Request) {
-	personID := chi.URLParam(r, "personID")
-	var in identity.TemplateInput
-	in.PersonID = personID
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	if err := s.identity.InsertTemplate(r.Context(), in); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to store template")
-		return
-	}
-	w.WriteHeader(http.StatusCreated)
-}
-
-func (s *Server) matchFace(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Embedding []float64 `json:"embedding"`
-		Threshold float64   `json:"threshold"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	result, err := s.identity.MatchFace(r.Context(), in.Embedding, in.Threshold)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "match failed")
-		return
-	}
-	writeJSON(w, http.StatusOK, result)
-}
-
-func (s *Server) listAuditLog(w http.ResponseWriter, r *http.Request) {
-	// TODO: implement
-	writeJSON(w, http.StatusOK, map[string]any{"audit": []any{}})
-}
-
-// --- WebRTC handlers ---
-
-func (s *Server) webrtcOffer(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		CameraID  string `json:"camera_id"`
-		SDPOffer  string `json:"sdp_offer"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	if body.CameraID == "" || body.SDPOffer == "" {
-		writeError(w, http.StatusBadRequest, "camera_id and sdp_offer are required")
-		return
-	}
-	userID, _ := r.Context().Value(userCtxKey{}).(string)
-	sess, err := s.signaling.CreateSession(r.Context(), body.CameraID, userID, body.SDPOffer)
-	if err != nil {
-		slog.Error("webrtc_create_session_failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to create session")
-		return
-	}
-	writeJSON(w, http.StatusCreated, sess)
-}
-
-func (s *Server) webrtcAnswer(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		SessionID  string `json:"session_id"`
-		SDPAnswer  string `json:"sdp_answer"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	if body.SessionID == "" || body.SDPAnswer == "" {
-		writeError(w, http.StatusBadRequest, "session_id and sdp_answer are required")
-		return
-	}
-	if err := s.signaling.SetAnswer(r.Context(), body.SessionID, body.SDPAnswer); err != nil {
-		if errors.Is(err, webrtc.ErrSessionNotFound) {
-			writeError(w, http.StatusNotFound, "session not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to set answer")
-		return
-	}
-	// Return the updated session so the viewer gets the answer
-	sess, err := s.signaling.GetSession(r.Context(), body.SessionID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to get session")
-		return
-	}
-	writeJSON(w, http.StatusOK, sess)
-}
-
-func (s *Server) webrtcICE(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		SessionID    string `json:"session_id"`
-		Candidate    string `json:"candidate"`
-		SDPMLineIndex int   `json:"sdp_mline_index"`
-		SDPMid       string `json:"sdp_mid"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	if body.SessionID == "" || body.Candidate == "" {
-		writeError(w, http.StatusBadRequest, "session_id and candidate are required")
-		return
-	}
-	if err := s.signaling.AddICECandidate(r.Context(), body.SessionID, webrtc.ICECandidate{
-		Candidate:     body.Candidate,
-		SDPMLineIndex: body.SDPMLineIndex,
-		SDPMid:        body.SDPMid,
-	}); err != nil {
-		if errors.Is(err, webrtc.ErrSessionNotFound) {
-			writeError(w, http.StatusNotFound, "session not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to add ICE candidate")
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (s *Server) getTurnCredentials(w http.ResponseWriter, r *http.Request) {
-	// Generate time-limited TURN credentials (24h TTL for pilot)
-	cred, err := s.signaling.GenerateTURNCredential(r.Context(), "", 24*time.Hour)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to generate TURN credentials")
-		return
-	}
-	writeJSON(w, http.StatusOK, cred)
-}
-
-// --- Notification handlers ---
-
-func (s *Server) listNotificationRules(w http.ResponseWriter, r *http.Request) {
-	rules, err := s.notifications.ListRules(r.Context())
-	if err != nil {
-		slog.Error("list_notification_rules_failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to list notification rules")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"rules": rules})
-}
-
-func (s *Server) createNotificationRule(w http.ResponseWriter, r *http.Request) {
-	var in notifications.CreateRuleInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	if in.EventType == "" || in.Severity == "" || in.Channel == "" || in.Target == "" {
-		writeError(w, http.StatusBadRequest, "event_type, severity, channel, and target are required")
-		return
-	}
-	rule, err := s.notifications.CreateRule(r.Context(), in)
-	if err != nil {
-		slog.Error("create_notification_rule_failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to create notification rule")
-		return
-	}
-	writeJSON(w, http.StatusCreated, rule)
-}
-
-func (s *Server) updateNotificationRule(w http.ResponseWriter, r *http.Request) {
-	ruleID := chi.URLParam(r, "ruleID")
-	var in notifications.UpdateRuleInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	rule, err := s.notifications.UpdateRule(r.Context(), ruleID, in)
-	if err != nil {
-		if errors.Is(err, notifications.ErrRuleNotFound) {
-			writeError(w, http.StatusNotFound, "notification rule not found")
-			return
-		}
-		slog.Error("update_notification_rule_failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to update notification rule")
-		return
-	}
-	writeJSON(w, http.StatusOK, rule)
-}
-
-func (s *Server) deleteNotificationRule(w http.ResponseWriter, r *http.Request) {
-	ruleID := chi.URLParam(r, "ruleID")
-	if err := s.notifications.DeleteRule(r.Context(), ruleID); err != nil {
-		if errors.Is(err, notifications.ErrRuleNotFound) {
-			writeError(w, http.StatusNotFound, "notification rule not found")
-			return
-		}
-		slog.Error("delete_notification_rule_failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to delete notification rule")
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// --- Staff handlers ---
-
-func (s *Server) listStaff(w http.ResponseWriter, r *http.Request) {
-	profiles, err := s.staff.ListStaff(r.Context())
-	if err != nil {
-		slog.Error("list_staff_failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to list staff")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"staff": profiles})
-}
-
-func (s *Server) getStaff(w http.ResponseWriter, r *http.Request) {
-	personID := chi.URLParam(r, "personID")
-	profile, err := s.staff.GetStaff(r.Context(), personID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "staff member not found")
-		return
-	}
-	writeJSON(w, http.StatusOK, profile)
-}
-
-func (s *Server) getStaffReport(w http.ResponseWriter, r *http.Request) {
-	personID := chi.URLParam(r, "personID")
-	report, err := s.staff.GenerateReport(r.Context(), personID)
-	if err != nil {
-		slog.Error("staff_report_failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to generate report")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"report": report})
-}
-
-func (s *Server) getStaffAttendance(w http.ResponseWriter, r *http.Request) {
-	personID := chi.URLParam(r, "personID")
-	var records []map[string]any
-	err := database.TenantTx(r.Context(), s.pool, func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `
-			SELECT attendance_id, date, check_in, check_out, status, late_minutes, overtime_minutes, notes
-			FROM staff_attendance WHERE person_id = $1 ORDER BY date DESC LIMIT 90`, personID)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var id, status, notes string
-			var date time.Time
-			var checkIn, checkOut *time.Time
-			var lateMins, otMins int
-			if err := rows.Scan(&id, &date, &checkIn, &checkOut, &status, &lateMins, &otMins, &notes); err != nil {
-				return err
-			}
-			records = append(records, map[string]any{
-				"attendance_id": id, "date": date, "check_in": checkIn, "check_out": checkOut,
-				"status": status, "late_minutes": lateMins, "overtime_minutes": otMins, "notes": notes,
-			})
-		}
-		return rows.Err()
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to get attendance")
-		return
-	}
-	if records == nil {
-		records = []map[string]any{}
-	}
-	writeJSON(w, http.StatusOK, records)
-}
-
-func (s *Server) recordAttendance(w http.ResponseWriter, r *http.Request) {
-	personID := chi.URLParam(r, "personID")
-	var in struct {
-		Date           string `json:"date"`
-		CheckIn        string `json:"check_in"`
-		CheckOut       string `json:"check_out"`
-		Status         string `json:"status"`
-		LateMinutes    int    `json:"late_minutes"`
-		OvertimeMinutes int   `json:"overtime_minutes"`
-		Notes          string `json:"notes"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	err := database.TenantTx(r.Context(), s.pool, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `
-			INSERT INTO staff_attendance (org_id, person_id, date, check_in, check_out, status, late_minutes, overtime_minutes, notes)
-			VALUES (current_setting('app.current_org_id', true)::uuid, $1, $2, $3, $4, $5, $6, $7, $8)
-			ON CONFLICT (person_id, date) DO UPDATE SET check_in = EXCLUDED.check_in, check_out = EXCLUDED.check_out,
-				status = EXCLUDED.status, late_minutes = EXCLUDED.late_minutes, overtime_minutes = EXCLUDED.overtime_minutes, notes = EXCLUDED.notes`,
-			personID, in.Date, in.CheckIn, in.CheckOut, in.Status, in.LateMinutes, in.OvertimeMinutes, in.Notes)
-		return err
-	})
-	if err != nil {
-		slog.Error("record_attendance_failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to record attendance")
-		return
-	}
-	writeJSON(w, http.StatusCreated, map[string]any{"status": "recorded"})
-}
-
-func (s *Server) getStaffHolidays(w http.ResponseWriter, r *http.Request) {
-	personID := chi.URLParam(r, "personID")
-	var records []map[string]any
-	err := database.TenantTx(r.Context(), s.pool, func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `
-			SELECT holiday_id, start_date, end_date, type, status, reason
-			FROM staff_holidays WHERE person_id = $1 ORDER BY start_date DESC`, personID)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var id, htype, status, reason string
-			var start, end time.Time
-			if err := rows.Scan(&id, &start, &end, &htype, &status, &reason); err != nil {
-				return err
-			}
-			records = append(records, map[string]any{
-				"holiday_id": id, "start_date": start, "end_date": end,
-				"type": htype, "status": status, "reason": reason,
-			})
-		}
-		return rows.Err()
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to get holidays")
-		return
-	}
-	if records == nil {
-		records = []map[string]any{}
-	}
-	writeJSON(w, http.StatusOK, records)
-}
-
-func (s *Server) requestHoliday(w http.ResponseWriter, r *http.Request) {
-	personID := chi.URLParam(r, "personID")
-	var in struct {
-		StartDate string `json:"start_date"`
-		EndDate   string `json:"end_date"`
-		Type      string `json:"type"`
-		Reason    string `json:"reason"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	err := database.TenantTx(r.Context(), s.pool, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `
-			INSERT INTO staff_holidays (org_id, person_id, start_date, end_date, type, reason)
-			VALUES (current_setting('app.current_org_id', true)::uuid, $1, $2, $3, $4, $5)`,
-			personID, in.StartDate, in.EndDate, in.Type, in.Reason)
-		return err
-	})
-	if err != nil {
-		slog.Error("request_holiday_failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to request holiday")
-		return
-	}
-	writeJSON(w, http.StatusCreated, map[string]any{"status": "requested"})
 }
 
 // --- Helpers ---
