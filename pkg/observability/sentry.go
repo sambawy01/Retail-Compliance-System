@@ -4,7 +4,6 @@
 package observability
 
 import (
-	"fmt"
 	"log/slog"
 	"os"
 )
@@ -57,4 +56,3 @@ func min(a, b int) int {
 	return b
 }
 
-var _ = fmt.Sprintf // keep fmt import if we add formatting later

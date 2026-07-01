@@ -1,5 +1,5 @@
-// Package middleware provides reusable HTTP middleware for Watch Dog.
-package middleware
+// Package api — middleware.go provides reusable HTTP middleware for Watch Dog.
+package api
 
 import (
 	"context"
