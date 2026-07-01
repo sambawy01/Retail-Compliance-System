@@ -46,3 +46,4 @@ edge-agent/*.egg-info/
 # Docker
 docker-compose.override.ymlweb/node_modules/
 web/dist/
+.vercel
