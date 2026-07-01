@@ -53,6 +53,10 @@ func run() error {
 
 	slog.Info("starting watchdog server", "port", cfg.Port, "env", cfg.Env)
 
+	// Initialize Sentry error tracking (no-op if SENTRY_DSN not set)
+	sentryCleanup := observability.InitSentry()
+	defer sentryCleanup()
+
 	// Build the database URL. If DB_PASSWORD is set, we construct the URL
 	// from parts to avoid URL-encoding issues with special characters in
 	// the password (pgx's URL parser can mangle !, @, etc).
@@ -149,6 +153,7 @@ func run() error {
 	// Also expose the observability health endpoint alongside the API routes.
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", observability.HealthHandler(pool))
+	mux.Handle("/metrics", http.HandlerFunc(observability.MetricsHandler))
 	mux.Handle("/", handler)
 
 	srv := &http.Server{

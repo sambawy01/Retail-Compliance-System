@@ -5,7 +5,11 @@ import App from './App'
 import { LanguageProvider } from './contexts/LanguageContext'
 import { AuthProvider } from './contexts/AuthContext'
 import { ErrorBoundary } from './ErrorBoundary'
+import { initSentry } from './services/sentry'
 import './index.css'
+
+// Initialize Sentry error tracking (no-op if VITE_SENTRY_DSN not set)
+initSentry()
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
