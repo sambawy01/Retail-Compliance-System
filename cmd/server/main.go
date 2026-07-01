@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,15 +14,12 @@ import (
 	"syscall"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib" // database/sql driver for pgx
-
 	"github.com/sambawy01/Retail-Compliance-System/internal/alerts"
 	"github.com/sambawy01/Retail-Compliance-System/internal/api"
 	"github.com/sambawy01/Retail-Compliance-System/internal/auth"
 	"github.com/sambawy01/Retail-Compliance-System/internal/config"
 	"github.com/sambawy01/Retail-Compliance-System/internal/event"
 	"github.com/sambawy01/Retail-Compliance-System/internal/identity"
-	"github.com/sambawy01/Retail-Compliance-System/internal/migrations"
 	"github.com/sambawy01/Retail-Compliance-System/internal/notifications"
 	"github.com/sambawy01/Retail-Compliance-System/internal/staff"
 	"github.com/sambawy01/Retail-Compliance-System/internal/vision"
@@ -75,21 +71,6 @@ func run() error {
 	}
 	defer pool.Close()
 	slog.Info("database connected")
-
-	// Run auto-migrations (embedded SQL files, tracked in schema_migrations table)
-	migCtx, migCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer migCancel()
-	migDB, err := sql.Open("pgx", dbURL)
-	if err != nil {
-		slog.Error("migration_open_failed", "error", err)
-	} else {
-		defer migDB.Close()
-		if err := migrations.Run(migCtx, migDB); err != nil {
-			slog.Error("migration_failed", "error", err)
-		} else {
-			slog.Info("migrations complete")
-		}
-	}
 
 	// Create event bus with a logging middleware
 	bus := event.New(func(h event.Handler) event.Handler {
