@@ -79,17 +79,17 @@ func run() error {
 	// Run auto-migrations (embedded SQL files, tracked in schema_migrations table)
 	migCtx, migCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer migCancel()
-	// We need a database/sql connection for migrations (pgxpool doesn't expose Exec for DDL)
 	migDB, err := sql.Open("pgx", dbURL)
 	if err != nil {
-		return fmt.Errorf("migration: open db: %w", err)
+		slog.Error("migration_open_failed", "error", err)
+	} else {
+		defer migDB.Close()
+		if err := migrations.Run(migCtx, migDB); err != nil {
+			slog.Error("migration_failed", "error", err)
+		} else {
+			slog.Info("migrations complete")
+		}
 	}
-	defer migDB.Close()
-	if err := migrations.Run(migCtx, migDB); err != nil {
-		slog.Error("migration_failed", "error", err)
-		return fmt.Errorf("migration: %w", err)
-	}
-	slog.Info("migrations complete")
 
 	// Create event bus with a logging middleware
 	bus := event.New(func(h event.Handler) event.Handler {
