@@ -25,8 +25,11 @@ import (
 type Person struct {
 	PersonID    string     `json:"person_id"`
 	OrgID       string     `json:"org_id"`
-	Kind        string     `json:"kind"` // "employee" or "customer"
+	Kind        string     `json:"kind"`         // "employee" or "customer"
 	DisplayName string     `json:"display_name"`
+	Phone       string     `json:"phone,omitempty"`
+	JobRole     string     `json:"job_role,omitempty"`
+	PhotoURL    string     `json:"photo_url,omitempty"`
 	EnrolledAt  time.Time  `json:"enrolled_at"`
 	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
@@ -43,8 +46,11 @@ type MatchResult struct {
 
 // EnrollPersonInput is the payload for enrolling a new person.
 type EnrollPersonInput struct {
-	Kind        string `json:"kind"`
-	DisplayName string `json:"display_name"`
+	Kind        string `json:"kind"`         // "employee" or "customer"
+	DisplayName string `json:"display_name"`  // full name
+	Phone       string `json:"phone"`          // optional contact phone
+	JobRole     string `json:"job_role"`       // optional job title (e.g. "Cashier", "Manager")
+	PhotoURL    string `json:"photo_url"`      // base64 data URL of face photo
 }
 
 // ConsentInput is the payload for recording consent.
@@ -91,13 +97,16 @@ func (s *Service) EnrollPerson(ctx context.Context, in EnrollPersonInput) (Perso
 		PersonID:    uuid.NewString(),
 		Kind:        in.Kind,
 		DisplayName: in.DisplayName,
+		Phone:       in.Phone,
+		JobRole:     in.JobRole,
+		PhotoURL:    in.PhotoURL,
 	}
 	err := database.TenantTx(ctx, s.pool, func(ctx context.Context, tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
-			INSERT INTO identity_persons (person_id, org_id, kind, display_name)
-			VALUES ($1, current_setting('app.current_org_id', true)::uuid, $2, $3)
+			INSERT INTO identity_persons (person_id, org_id, kind, display_name, phone, job_role, photo_url)
+			VALUES ($1, current_setting('app.current_org_id', true)::uuid, $2, $3, $4, $5, $6)
 			RETURNING enrolled_at, created_at, updated_at`,
-			p.PersonID, p.Kind, p.DisplayName,
+			p.PersonID, p.Kind, p.DisplayName, p.Phone, p.JobRole, p.PhotoURL,
 		).Scan(&p.EnrolledAt, &p.CreatedAt, &p.UpdatedAt)
 	})
 	if err != nil {
@@ -111,10 +120,10 @@ func (s *Service) GetPerson(ctx context.Context, personID string) (Person, error
 	var p Person
 	err := database.TenantTx(ctx, s.pool, func(ctx context.Context, tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
-			SELECT person_id, org_id::text, kind, display_name, enrolled_at, revoked_at, created_at, updated_at
+			SELECT person_id, org_id::text, kind, display_name, phone, job_role, photo_url, enrolled_at, revoked_at, created_at, updated_at
 			FROM identity_persons WHERE person_id = $1`,
 			personID,
-		).Scan(&p.PersonID, &p.OrgID, &p.Kind, &p.DisplayName, &p.EnrolledAt, &p.RevokedAt, &p.CreatedAt, &p.UpdatedAt)
+		).Scan(&p.PersonID, &p.OrgID, &p.Kind, &p.DisplayName, &p.Phone, &p.JobRole, &p.PhotoURL, &p.EnrolledAt, &p.RevokedAt, &p.CreatedAt, &p.UpdatedAt)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Person{}, ErrPersonNotFound
@@ -132,9 +141,9 @@ func (s *Service) ListPersons(ctx context.Context, kind string) ([]Person, error
 		var rows pgx.Rows
 		var err error
 		if kind == "" {
-			rows, err = tx.Query(ctx, `SELECT person_id, org_id::text, kind, display_name, enrolled_at, revoked_at, created_at, updated_at FROM identity_persons ORDER BY enrolled_at DESC`)
+			rows, err = tx.Query(ctx, `SELECT person_id, org_id::text, kind, display_name, phone, job_role, photo_url, enrolled_at, revoked_at, created_at, updated_at FROM identity_persons ORDER BY enrolled_at DESC`)
 		} else {
-			rows, err = tx.Query(ctx, `SELECT person_id, org_id::text, kind, display_name, enrolled_at, revoked_at, created_at, updated_at FROM identity_persons WHERE kind = $1 ORDER BY enrolled_at DESC`, kind)
+			rows, err = tx.Query(ctx, `SELECT person_id, org_id::text, kind, display_name, phone, job_role, photo_url, enrolled_at, revoked_at, created_at, updated_at FROM identity_persons WHERE kind = $1 ORDER BY enrolled_at DESC`, kind)
 		}
 		if err != nil {
 			return err
@@ -142,7 +151,7 @@ func (s *Service) ListPersons(ctx context.Context, kind string) ([]Person, error
 		defer rows.Close()
 		for rows.Next() {
 			var p Person
-			if err := rows.Scan(&p.PersonID, &p.OrgID, &p.Kind, &p.DisplayName, &p.EnrolledAt, &p.RevokedAt, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			if err := rows.Scan(&p.PersonID, &p.OrgID, &p.Kind, &p.DisplayName, &p.Phone, &p.JobRole, &p.PhotoURL, &p.EnrolledAt, &p.RevokedAt, &p.CreatedAt, &p.UpdatedAt); err != nil {
 				return err
 			}
 			out = append(out, p)
