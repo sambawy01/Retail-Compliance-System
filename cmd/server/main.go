@@ -22,6 +22,7 @@ import (
 	"github.com/sambawy01/Retail-Compliance-System/internal/event"
 	"github.com/sambawy01/Retail-Compliance-System/internal/identity"
 	"github.com/sambawy01/Retail-Compliance-System/internal/notifications"
+	"github.com/sambawy01/Retail-Compliance-System/internal/staff"
 	"github.com/sambawy01/Retail-Compliance-System/internal/vision"
 	"github.com/sambawy01/Retail-Compliance-System/internal/webrtc"
 	"github.com/sambawy01/Retail-Compliance-System/pkg/database"
@@ -90,6 +91,9 @@ func run() error {
 	// Create notifications service
 	notifSvc := notifications.New(pool)
 
+	// Create staff service
+	staffSvc := staff.New(pool)
+
 	// Create auth service — prefer base64 env vars, fall back to file paths.
 	// Fail hard if auth keys are not configured: an unauthenticated server
 	// is a security liability, not a convenience.
@@ -112,7 +116,7 @@ func run() error {
 	signalingServer := webrtc.New(pool)
 
 	// Create API server + router
-	apiServer := api.NewServer(pool, bus, visionSvc, identitySvc, authSvc, notifSvc, signalingServer, api.APIConfig{
+	apiServer := api.NewServer(pool, bus, visionSvc, identitySvc, authSvc, notifSvc, staffSvc, signalingServer, api.APIConfig{
 		AllowedOrigins: cfg.AllowedOrigins,
 	})
 

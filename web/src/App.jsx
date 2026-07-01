@@ -10,6 +10,7 @@ const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Cameras = lazy(() => import('./pages/Cameras'))
 const Events = lazy(() => import('./pages/Events'))
 const FaceID = lazy(() => import('./pages/FaceID'))
+const Staff = lazy(() => import('./pages/Staff'))
 const Settings = lazy(() => import('./pages/Settings'))
 
 function PageLoader() {
@@ -40,6 +41,7 @@ export default function App() {
           <Route path="/cameras/:id" element={<Cameras />} />
           <Route path="/events" element={<Events />} />
           <Route path="/faceid" element={<FaceID />} />
+          <Route path="/staff" element={<Staff />} />
           <Route path="/settings" element={<Settings />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

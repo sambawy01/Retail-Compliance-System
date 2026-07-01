@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, Camera, ListTree, ScanFace, Settings, ShieldCheck, LogOut } from 'lucide-react'
+import { LayoutDashboard, Camera, ListTree, ScanFace, Users, Settings, ShieldCheck, LogOut } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { useLang } from '../contexts/LanguageContext'
 import { useState } from 'react'
@@ -15,6 +15,7 @@ export default function Sidebar() {
     { to: '/cameras', icon: Camera, label: t('nav.cameras') },
     { to: '/events', icon: ListTree, label: t('nav.events') },
     { to: '/faceid', icon: ScanFace, label: t('nav.faceid') },
+    { to: '/staff', icon: Users, label: t('nav.staff') },
     { to: '/settings', icon: Settings, label: t('nav.settings') },
   ]
 

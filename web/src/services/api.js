@@ -94,6 +94,11 @@ export const apiGet = {
   clips: (cameraId) => api.get('/vision/clips', { params: { camera_id: cameraId } }).then((r) => r.data),
   persons: (kind) => api.get('/identity/persons', { params: { kind } }).then((r) => r.data),
   notificationRules: () => api.get('/notifications/rules').then((r) => r.data),
+  staff: () => api.get('/staff/').then((r) => r.data),
+  staffMember: (id) => api.get(`/staff/${id}`).then((r) => r.data),
+  staffReport: (id) => api.get(`/staff/${id}/report`).then((r) => r.data),
+  staffAttendance: (id) => api.get(`/staff/${id}/attendance`).then((r) => r.data),
+  staffHolidays: (id) => api.get(`/staff/${id}/holidays`).then((r) => r.data),
 }
 
 export const apiPost = {
