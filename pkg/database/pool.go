@@ -46,6 +46,13 @@ func NewPool(ctx context.Context, databaseURL string, opts ...PoolConfig) (*pgxp
 		}
 	}
 
+	// Disable prepared statements when using PgBouncer/Supabase pooler.
+	// The transaction pooler (port 6543) does not support prepared statements
+	// because connections are recycled between transactions, causing
+	// "prepared statement already exists" errors. Simple protocol mode
+	// sends queries as text without caching them.
+	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
+
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("database: new pool: %w", err)
