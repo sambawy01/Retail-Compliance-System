@@ -23,15 +23,16 @@ import (
 
 // Server holds all services and wires the HTTP routes.
 type Server struct {
-	pool          *pgxpool.Pool
-	bus           *event.Bus
-	vision        *vision.Service
-	identity      *identity.Service
-	auth          *auth.Service
-	notifications *notifications.Service
-	staff         *staff.Service
-	signaling     *webrtc.SignalingServer
-	cfg           APIConfig
+	pool           *pgxpool.Pool
+	bus            *event.Bus
+	vision         *vision.Service
+	identity       *identity.Service
+	auth           *auth.Service
+	notifications  *notifications.Service
+	staff          *staff.Service
+	signaling      *webrtc.SignalingServer
+	cfg            APIConfig
+	loginTracker   *LoginAttemptTracker
 }
 
 // APIConfig holds API-level configuration.
@@ -42,15 +43,16 @@ type APIConfig struct {
 // NewServer creates the API server with all dependencies.
 func NewServer(pool *pgxpool.Pool, bus *event.Bus, vs *vision.Service, ids *identity.Service, authSvc *auth.Service, notifSvc *notifications.Service, staffSvc *staff.Service, sig *webrtc.SignalingServer, cfg APIConfig) *Server {
 	return &Server{
-		pool:          pool,
-		bus:           bus,
-		vision:        vs,
-		identity:      ids,
-		auth:          authSvc,
+		pool:         pool,
+		bus:          bus,
+		vision:       vs,
+		identity:     ids,
+		auth:         authSvc,
 		notifications: notifSvc,
-		staff:         staffSvc,
-		signaling:     sig,
-		cfg:           cfg,
+		staff:        staffSvc,
+		signaling:    sig,
+		cfg:          cfg,
+		loginTracker: NewLoginAttemptTracker(5, 900), // 5 failures, 15min lock
 	}
 }
 

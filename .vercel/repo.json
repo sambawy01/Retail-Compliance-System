@@ -1,0 +1,11 @@
+{
+  "remoteName": "origin",
+  "projects": [
+    {
+      "id": "prj_u42uKyBmkT8CWq1UcUgfX3pimYj9",
+      "name": "watch-dog",
+      "directory": "web",
+      "orgId": "team_SXTsdQkGWcYVqG6mDLMi9Jv4"
+    }
+  ]
+}

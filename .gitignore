@@ -1,49 +1,32 @@
 # Binaries
 watchdog
 *.exe
-*.dll
-*.so
-*.dylib
-
-# Test binaries
-*.test
-
-# Output
-*.out
-coverage.txt
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
 
 # Environment
 .env
 .env.local
 .env.*.local
 
-# Keys
-*.pem
-*.key
-jwt_private.pem
-jwt_public.pem
+# Go
+vendor/
+coverage.out
+*.prof
 
-# Node (web)
+# Node/Frontend
 web/node_modules/
 web/dist/
+web/.vercel/
 
-# Python (edge-agent)
-edge-agent/.venv/
-edge-agent/__pycache__/
-edge-agent/**/__pycache__/
-edge-agent/*.egg-info/
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 
-# Docker
-docker-compose.override.ymlweb/node_modules/
-web/dist/
-.vercel
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

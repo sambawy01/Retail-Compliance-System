@@ -86,6 +86,64 @@ func (rl *RateLimiter) Allow(key string) bool {
 	return false
 }
 
+// LoginAttemptTracker tracks failed login attempts per email and per IP.
+// Locks account after maxFailures attempts for lockDuration.
+type LoginAttemptTracker struct {
+	failures  map[string]*attemptRecord
+	maxFailures int
+	lockDuration int64 // seconds
+}
+
+type attemptRecord struct {
+	count     int
+	lockedUntil int64
+}
+
+// NewLoginAttemptTracker creates a tracker that locks after maxFailures
+// failed attempts for lockDuration seconds.
+func NewLoginAttemptTracker(maxFailures int, lockDurationSec int) *LoginAttemptTracker {
+	return &LoginAttemptTracker{
+		failures:     make(map[string]*attemptRecord),
+		maxFailures:  maxFailures,
+		lockDuration: int64(lockDurationSec),
+	}
+}
+
+// IsLocked checks if an email is currently locked.
+func (t *LoginAttemptTracker) IsLocked(email string) bool {
+	r, exists := t.failures[email]
+	if !exists {
+		return false
+	}
+	now := timeNow()
+	if r.lockedUntil > now {
+		return true
+	}
+	// Lock expired, reset
+	if r.lockedUntil > 0 && r.lockedUntil <= now {
+		delete(t.failures, email)
+	}
+	return false
+}
+
+// RecordFailure increments the failure count and locks if threshold reached.
+func (t *LoginAttemptTracker) RecordFailure(email string) {
+	r, exists := t.failures[email]
+	if !exists {
+		r = &attemptRecord{}
+		t.failures[email] = r
+	}
+	r.count++
+	if r.count >= t.maxFailures {
+		r.lockedUntil = timeNow() + t.lockDuration
+	}
+}
+
+// RecordSuccess resets the failure count for an email.
+func (t *LoginAttemptTracker) RecordSuccess(email string) {
+	delete(t.failures, email)
+}
+
 // RateLimit middleware returns 429 when the rate limit is exceeded.
 // The key function extracts the rate-limiting key from the request (default: client IP).
 func RateLimit(rl *RateLimiter) func(http.Handler) http.Handler {

@@ -1,0 +1,152 @@
+openapi: 3.0.3
+info:
+  title: Watch Dog API
+  version: 1.0.0
+  description: Retail compliance monitoring API
+servers:
+  - url: https://watchdog-backend-production-dcde.up.railway.app
+    description: Production
+  - url: http://localhost:8080
+    description: Development
+security:
+  - BearerAuth: []
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+paths:
+  /health:
+    get:
+      security: []
+      responses:
+        '200':
+          description: Health status
+  /api/v1/auth/login:
+    post:
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string }
+                password: { type: string }
+      responses:
+        '200':
+          description: Login successful
+        '401': { description: Invalid credentials }
+        '429': { description: Rate limited }
+  /api/v1/auth/me:
+    get:
+      responses:
+        '200': { description: Current user }
+        '401': { description: Unauthorized }
+  /api/v1/auth/refresh:
+    post:
+      responses:
+        '200': { description: New token }
+        '401': { description: Invalid token }
+  /api/v1/vision/cameras:
+    get:
+      responses:
+        '200': { description: List of cameras }
+    post:
+      responses:
+        '201': { description: Camera created }
+  /api/v1/vision/cameras/{cameraID}:
+    get:
+      parameters:
+        - { name: cameraID, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Camera details }
+        '404': { description: Not found }
+    patch:
+      responses:
+        '200': { description: Camera updated }
+    delete:
+      responses:
+        '204': { description: Camera deleted }
+  /api/v1/vision/detections:
+    get:
+      responses:
+        '200': { description: List of detections }
+    post:
+      responses:
+        '201': { description: Detection created }
+  /api/v1/identity/persons:
+    get:
+      responses:
+        '200': { description: List of persons }
+    post:
+      responses:
+        '201': { description: Person enrolled }
+  /api/v1/identity/persons/{personID}:
+    get:
+      responses:
+        '200': { description: Person details }
+        '404': { description: Not found }
+    delete:
+      responses:
+        '204': { description: Person revoked }
+  /api/v1/identity/match:
+    post:
+      responses:
+        '200': { description: Match result }
+  /api/v1/staff:
+    get:
+      responses:
+        '200': { description: Staff performance profiles }
+  /api/v1/staff/{personID}:
+    get:
+      responses:
+        '200': { description: Staff profile }
+  /api/v1/staff/{personID}/report:
+    get:
+      responses:
+        '200': { description: AI-generated report }
+  /api/v1/staff/{personID}/attendance:
+    get:
+      responses:
+        '200': { description: Attendance records }
+    post:
+      responses:
+        '201': { description: Attendance recorded }
+  /api/v1/staff/{personID}/holidays:
+    get:
+      responses:
+        '200': { description: Holiday records }
+    post:
+      responses:
+        '201': { description: Holiday requested }
+  /api/v1/notifications/rules:
+    get:
+      responses:
+        '200': { description: List of notification rules }
+    post:
+      responses:
+        '201': { description: Rule created }
+  /api/v1/notifications/rules/{ruleID}:
+    patch:
+      responses:
+        '200': { description: Rule updated }
+    delete:
+      responses:
+        '204': { description: Rule deleted }
+  /api/v1/webrtc/offer:
+    post:
+      responses:
+        '201': { description: Session created }
+  /api/v1/webrtc/turn:
+    post:
+      responses:
+        '200': { description: TURN credentials }

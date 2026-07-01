@@ -36,6 +36,12 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check account lockout
+	if s.loginTracker != nil && s.loginTracker.IsLocked(body.Email) {
+		writeError(w, http.StatusTooManyRequests, "account temporarily locked due to too many failed attempts")
+		return
+	}
+
 	ctx := context.Background()
 	var userID, dbOrgID, role, displayName, dbPasswordHash string
 	err := s.pool.QueryRow(ctx,
@@ -44,15 +50,20 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 	).Scan(&userID, &dbOrgID, &role, &displayName, &dbPasswordHash)
 	if err != nil {
 		slog.Error("login_lookup_failed", "error", err, "email", body.Email)
+		if s.loginTracker != nil { s.loginTracker.RecordFailure(body.Email) }
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
 
 	if err := bcryptCompare([]byte(dbPasswordHash), []byte(body.Password)); err != nil {
 		slog.Error("login_bcrypt_failed", "email", body.Email, "error", err)
+		if s.loginTracker != nil { s.loginTracker.RecordFailure(body.Email) }
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
+
+	// Login successful — reset failure counter
+	if s.loginTracker != nil { s.loginTracker.RecordSuccess(body.Email) }
 
 	if s.auth == nil {
 		writeError(w, http.StatusServiceUnavailable, "authentication service unavailable")
