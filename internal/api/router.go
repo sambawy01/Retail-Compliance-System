@@ -17,6 +17,7 @@ import (
 	"github.com/sambawy01/Retail-Compliance-System/internal/auth"
 	"github.com/sambawy01/Retail-Compliance-System/internal/event"
 	"github.com/sambawy01/Retail-Compliance-System/internal/identity"
+	"github.com/sambawy01/Retail-Compliance-System/internal/notifications"
 	"github.com/sambawy01/Retail-Compliance-System/internal/tenant"
 	"github.com/sambawy01/Retail-Compliance-System/internal/vision"
 	"github.com/sambawy01/Retail-Compliance-System/internal/webrtc"
@@ -27,13 +28,14 @@ import (
 
 // Server holds all services and wires the HTTP routes.
 type Server struct {
-	pool       *pgxpool.Pool
-	bus        *event.Bus
-	vision     *vision.Service
-	identity   *identity.Service
-	auth       *auth.Service
-	signaling  *webrtc.SignalingServer
-	cfg        APIConfig
+	pool         *pgxpool.Pool
+	bus          *event.Bus
+	vision       *vision.Service
+	identity     *identity.Service
+	auth         *auth.Service
+	notifications *notifications.Service
+	signaling    *webrtc.SignalingServer
+	cfg          APIConfig
 }
 
 // APIConfig holds API-level configuration.
@@ -42,15 +44,16 @@ type APIConfig struct {
 }
 
 // NewServer creates the API server with all dependencies.
-func NewServer(pool *pgxpool.Pool, bus *event.Bus, vs *vision.Service, ids *identity.Service, authSvc *auth.Service, sig *webrtc.SignalingServer, cfg APIConfig) *Server {
+func NewServer(pool *pgxpool.Pool, bus *event.Bus, vs *vision.Service, ids *identity.Service, authSvc *auth.Service, notifSvc *notifications.Service, sig *webrtc.SignalingServer, cfg APIConfig) *Server {
 	return &Server{
-		pool:      pool,
-		bus:       bus,
-		vision:    vs,
-		identity:  ids,
-		auth:      authSvc,
-		signaling: sig,
-		cfg:       cfg,
+		pool:          pool,
+		bus:           bus,
+		vision:        vs,
+		identity:      ids,
+		auth:          authSvc,
+		notifications: notifSvc,
+		signaling:     sig,
+		cfg:           cfg,
 	}
 }
 
@@ -132,7 +135,9 @@ func (s *Server) Router() http.Handler {
 		// Notifications
 		r.Route("/api/v1/notifications", func(r chi.Router) {
 			r.Get("/rules", s.listNotificationRules)
-			r.Post("/rules", s.createNotificationRule)
+			r.With(s.requireRole("owner", "admin", "manager")).Post("/rules", s.createNotificationRule)
+			r.With(s.requireRole("owner", "admin", "manager")).Patch("/rules/{ruleID}", s.updateNotificationRule)
+			r.With(s.requireRole("owner", "admin")).Delete("/rules/{ruleID}", s.deleteNotificationRule)
 		})
 	})
 
@@ -376,8 +381,53 @@ func (s *Server) meHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) refreshHandler(w http.ResponseWriter, r *http.Request) {
-	// TODO: refresh token
-	writeError(w, http.StatusNotImplemented, "refresh not yet implemented")
+	// Read the current token from cookie or Bearer header
+	var token string
+	if cookie, err := r.Cookie("watchdog_session"); err == nil && cookie.Value != "" {
+		token = cookie.Value
+	} else {
+		header := r.Header.Get("Authorization")
+		if strings.HasPrefix(header, "Bearer ") {
+			token = strings.TrimPrefix(header, "Bearer ")
+		}
+	}
+	if token == "" {
+		writeError(w, http.StatusUnauthorized, "missing authentication token")
+		return
+	}
+	if s.auth == nil {
+		writeError(w, http.StatusServiceUnavailable, "authentication service unavailable")
+		return
+	}
+	claims, err := s.auth.ValidateToken(token)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid or expired token")
+		return
+	}
+	// Issue a fresh token with a new 24h expiry
+	newToken, err := s.auth.GenerateToken(claims.UserID, claims.OrgID, claims.Role)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate token")
+		return
+	}
+	// Set the refreshed cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     "watchdog_session",
+		Value:    newToken,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteNoneMode,
+		MaxAge:   86400,
+	})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"token": newToken,
+		"user": map[string]any{
+			"user_id": claims.UserID,
+			"role":    claims.Role,
+			"org_id":  claims.OrgID,
+		},
+	})
 }
 
 // --- Camera handlers ---
@@ -772,13 +822,66 @@ func (s *Server) getTurnCredentials(w http.ResponseWriter, r *http.Request) {
 // --- Notification handlers ---
 
 func (s *Server) listNotificationRules(w http.ResponseWriter, r *http.Request) {
-	// TODO: implement
-	writeJSON(w, http.StatusOK, map[string]any{"rules": []any{}})
+	rules, err := s.notifications.ListRules(r.Context())
+	if err != nil {
+		slog.Error("list_notification_rules_failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list notification rules")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"rules": rules})
 }
 
 func (s *Server) createNotificationRule(w http.ResponseWriter, r *http.Request) {
-	// TODO: implement
-	writeError(w, http.StatusNotImplemented, "notification rules not yet implemented")
+	var in notifications.CreateRuleInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if in.EventType == "" || in.Severity == "" || in.Channel == "" || in.Target == "" {
+		writeError(w, http.StatusBadRequest, "event_type, severity, channel, and target are required")
+		return
+	}
+	rule, err := s.notifications.CreateRule(r.Context(), in)
+	if err != nil {
+		slog.Error("create_notification_rule_failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to create notification rule")
+		return
+	}
+	writeJSON(w, http.StatusCreated, rule)
+}
+
+func (s *Server) updateNotificationRule(w http.ResponseWriter, r *http.Request) {
+	ruleID := chi.URLParam(r, "ruleID")
+	var in notifications.UpdateRuleInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	rule, err := s.notifications.UpdateRule(r.Context(), ruleID, in)
+	if err != nil {
+		if errors.Is(err, notifications.ErrRuleNotFound) {
+			writeError(w, http.StatusNotFound, "notification rule not found")
+			return
+		}
+		slog.Error("update_notification_rule_failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to update notification rule")
+		return
+	}
+	writeJSON(w, http.StatusOK, rule)
+}
+
+func (s *Server) deleteNotificationRule(w http.ResponseWriter, r *http.Request) {
+	ruleID := chi.URLParam(r, "ruleID")
+	if err := s.notifications.DeleteRule(r.Context(), ruleID); err != nil {
+		if errors.Is(err, notifications.ErrRuleNotFound) {
+			writeError(w, http.StatusNotFound, "notification rule not found")
+			return
+		}
+		slog.Error("delete_notification_rule_failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to delete notification rule")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- Helpers ---

@@ -74,14 +74,19 @@ func NewFromBase64(privB64, pubB64 string) (*Service, error) {
 	return NewFromBytes(privPEM, pubPEM)
 }
 
-// GenerateToken creates a signed JWT for the given user.
+// GenerateToken creates a signed JWT for the given user with the default 24h expiry.
 func (s *Service) GenerateToken(userID, orgID, role string) (string, error) {
+	return s.GenerateTokenWithExpiry(userID, orgID, role, 24*time.Hour)
+}
+
+// GenerateTokenWithExpiry creates a signed JWT with a custom TTL.
+func (s *Service) GenerateTokenWithExpiry(userID, orgID, role string, ttl time.Duration) (string, error) {
 	claims := Claims{
 		UserID: userID,
 		OrgID:  orgID,
 		Role:   role,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(ttl)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			Issuer:    "watch-dog",
 		},

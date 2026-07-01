@@ -40,14 +40,14 @@ func generateTestKeys(t *testing.T) (privPEM, pubPEM []byte) {
 }
 
 func TestNewServer(t *testing.T) {
-	srv := NewServer(nil, nil, nil, nil, nil, nil, APIConfig{AllowedOrigins: "*"})
+	srv := NewServer(nil, nil, nil, nil, nil, nil, nil, APIConfig{AllowedOrigins: "*"})
 	if srv == nil {
 		t.Fatal("expected non-nil server")
 	}
 }
 
 func TestHealthHandler(t *testing.T) {
-	srv := NewServer(nil, nil, nil, nil, nil, nil, APIConfig{})
+	srv := NewServer(nil, nil, nil, nil, nil, nil, nil, APIConfig{})
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
 
@@ -84,7 +84,7 @@ func TestCORSMiddleware(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := NewServer(nil, nil, nil, nil, nil, nil, APIConfig{AllowedOrigins: tc.allowedOrigins})
+			srv := NewServer(nil, nil, nil, nil, nil, nil, nil, APIConfig{AllowedOrigins: tc.allowedOrigins})
 			handler := srv.corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
 			}))
@@ -102,7 +102,7 @@ func TestCORSMiddleware(t *testing.T) {
 }
 
 func TestCORSMiddleware_OptionsRequest(t *testing.T) {
-	srv := NewServer(nil, nil, nil, nil, nil, nil, APIConfig{AllowedOrigins: "*"})
+	srv := NewServer(nil, nil, nil, nil, nil, nil, nil, APIConfig{AllowedOrigins: "*"})
 	handler := srv.corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("next handler should not be called for OPTIONS")
 	}))
@@ -117,7 +117,7 @@ func TestCORSMiddleware_OptionsRequest(t *testing.T) {
 }
 
 func TestCORSMiddleware_Headers(t *testing.T) {
-	srv := NewServer(nil, nil, nil, nil, nil, nil, APIConfig{AllowedOrigins: "*"})
+	srv := NewServer(nil, nil, nil, nil, nil, nil, nil, APIConfig{AllowedOrigins: "*"})
 	handler := srv.corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -135,7 +135,7 @@ func TestCORSMiddleware_Headers(t *testing.T) {
 }
 
 func TestAuthMiddleware_NoAuthHeader(t *testing.T) {
-	srv := NewServer(nil, nil, nil, nil, nil, nil, APIConfig{})
+	srv := NewServer(nil, nil, nil, nil, nil, nil, nil, APIConfig{})
 	handler := srv.authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("next handler should not be called")
 	}))
@@ -150,7 +150,7 @@ func TestAuthMiddleware_NoAuthHeader(t *testing.T) {
 }
 
 func TestAuthMiddleware_InvalidAuthHeader(t *testing.T) {
-	srv := NewServer(nil, nil, nil, nil, nil, nil, APIConfig{})
+	srv := NewServer(nil, nil, nil, nil, nil, nil, nil, APIConfig{})
 	handler := srv.authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("next handler should not be called")
 	}))
@@ -194,7 +194,7 @@ func TestAuthMiddleware_InvalidToken(t *testing.T) {
 }
 
 func TestRouter_HealthEndpoint(t *testing.T) {
-	srv := NewServer(nil, nil, nil, nil, nil, nil, APIConfig{})
+	srv := NewServer(nil, nil, nil, nil, nil, nil, nil, APIConfig{})
 	r := srv.Router()
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
@@ -207,7 +207,7 @@ func TestRouter_HealthEndpoint(t *testing.T) {
 }
 
 func TestRouter_ProtectedEndpointRequiresAuth(t *testing.T) {
-	srv := NewServer(nil, nil, nil, nil, nil, nil, APIConfig{})
+	srv := NewServer(nil, nil, nil, nil, nil, nil, nil, APIConfig{})
 	r := srv.Router()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/vision/cameras", nil)
@@ -220,7 +220,7 @@ func TestRouter_ProtectedEndpointRequiresAuth(t *testing.T) {
 }
 
 func TestRouter_LoginEndpoint_BadJSON(t *testing.T) {
-	srv := NewServer(nil, nil, nil, nil, nil, nil, APIConfig{})
+	srv := NewServer(nil, nil, nil, nil, nil, nil, nil, APIConfig{})
 	r := srv.Router()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader("not json"))
@@ -234,7 +234,7 @@ func TestRouter_LoginEndpoint_BadJSON(t *testing.T) {
 }
 
 func TestRouter_LoginEndpoint_EmptyFields(t *testing.T) {
-	srv := NewServer(nil, nil, nil, nil, nil, nil, APIConfig{})
+	srv := NewServer(nil, nil, nil, nil, nil, nil, nil, APIConfig{})
 	r := srv.Router()
 
 	body := `{"email":"","password":""}`
@@ -249,7 +249,7 @@ func TestRouter_LoginEndpoint_EmptyFields(t *testing.T) {
 }
 
 func TestRouter_LoginEndpoint_MissingFields(t *testing.T) {
-	srv := NewServer(nil, nil, nil, nil, nil, nil, APIConfig{})
+	srv := NewServer(nil, nil, nil, nil, nil, nil, nil, APIConfig{})
 	r := srv.Router()
 
 	tests := []struct {
@@ -274,21 +274,54 @@ func TestRouter_LoginEndpoint_MissingFields(t *testing.T) {
 	}
 }
 
-func TestRouter_RefreshEndpoint(t *testing.T) {
-	srv := NewServer(nil, nil, nil, nil, nil, nil, APIConfig{})
+func TestRouter_RefreshEndpoint_NoToken(t *testing.T) {
+	srv := NewServer(nil, nil, nil, nil, nil, nil, nil, APIConfig{})
 	r := srv.Router()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusNotImplemented {
-		t.Errorf("status: got %d, want %d", rec.Code, http.StatusNotImplemented)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status: got %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestRouter_RefreshEndpoint_WithValidToken(t *testing.T) {
+	privPEM, pubPEM := generateTestKeys(t)
+	authSvc, err := auth.NewFromBytes(privPEM, pubPEM)
+	if err != nil {
+		t.Fatalf("NewFromBytes: %v", err)
+	}
+
+	srv := NewServer(nil, nil, nil, nil, authSvc, nil, nil, APIConfig{})
+	r := srv.Router()
+
+	token, err := authSvc.GenerateToken("user-123", "550e8400-e29b-41d4-a716-446655440000", "admin")
+	if err != nil {
+		t.Fatalf("GenerateToken: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status: got %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["token"] == nil || body["token"] == "" {
+		t.Error("expected non-empty token in response")
 	}
 }
 
 func TestRouter_WebRTCEndpoints_RequireAuth(t *testing.T) {
-	srv := NewServer(nil, nil, nil, nil, nil, nil, APIConfig{})
+	srv := NewServer(nil, nil, nil, nil, nil, nil, nil, APIConfig{})
 	r := srv.Router()
 
 	tests := []struct {
@@ -313,7 +346,7 @@ func TestRouter_WebRTCEndpoints_RequireAuth(t *testing.T) {
 }
 
 func TestRouter_NotificationRules_RequireAuth(t *testing.T) {
-	srv := NewServer(nil, nil, nil, nil, nil, nil, APIConfig{})
+	srv := NewServer(nil, nil, nil, nil, nil, nil, nil, APIConfig{})
 	r := srv.Router()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/notifications/rules", nil)
@@ -363,7 +396,7 @@ func TestWriteError(t *testing.T) {
 }
 
 func TestRouter_AllProtectedRoutes(t *testing.T) {
-	srv := NewServer(nil, nil, nil, nil, nil, nil, APIConfig{})
+	srv := NewServer(nil, nil, nil, nil, nil, nil, nil, APIConfig{})
 	r := srv.Router()
 
 	routes := []struct {
@@ -393,6 +426,10 @@ func TestRouter_AllProtectedRoutes(t *testing.T) {
 		{http.MethodPost, "/api/v1/identity/persons/550e8400-e29b-41d4-a716-446655440000/templates"},
 		{http.MethodPost, "/api/v1/identity/match"},
 		{http.MethodGet, "/api/v1/identity/audit"},
+		{http.MethodGet, "/api/v1/notifications/rules"},
+		{http.MethodPost, "/api/v1/notifications/rules"},
+		{http.MethodPatch, "/api/v1/notifications/rules/550e8400-e29b-41d4-a716-446655440000"},
+		{http.MethodDelete, "/api/v1/notifications/rules/550e8400-e29b-41d4-a716-446655440000"},
 	}
 
 	for _, route := range routes {
@@ -419,7 +456,7 @@ func TestRouter_WithValidToken(t *testing.T) {
 	visionSvc := vision.New(nil, bus, nil)
 	identitySvc := identity.New(nil, bus)
 
-	srv := NewServer(nil, bus, visionSvc, identitySvc, authSvc, nil, APIConfig{AllowedOrigins: "*"})
+	srv := NewServer(nil, bus, visionSvc, identitySvc, authSvc, nil, nil, APIConfig{AllowedOrigins: "*"})
 	r := srv.Router()
 
 	token, err := authSvc.GenerateToken("user-123", "550e8400-e29b-41d4-a716-446655440000", "admin")
@@ -445,7 +482,7 @@ func TestRouter_WithInvalidOrgIDInToken(t *testing.T) {
 		t.Fatalf("NewFromBytes: %v", err)
 	}
 
-	srv := NewServer(nil, nil, nil, nil, authSvc, nil, APIConfig{})
+	srv := NewServer(nil, nil, nil, nil, authSvc, nil, nil, APIConfig{})
 	r := srv.Router()
 
 	token, err := authSvc.GenerateToken("user-123", "not-a-uuid", "admin")

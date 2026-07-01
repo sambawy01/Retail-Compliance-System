@@ -1,8 +1,7 @@
 import { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react'
-import api from '../services/api'
+import api, { TOKEN_KEY } from '../services/api'
 
 const AuthContext = createContext(null)
-const TOKEN_KEY = 'watchdog_token'
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
@@ -66,9 +65,30 @@ export function AuthProvider({ children }) {
     }
   }, [])
 
+  const refresh = useCallback(async () => {
+    const token = localStorage.getItem(TOKEN_KEY)
+    if (!token) return false
+    try {
+      const res = await api.post('/auth/refresh', {}, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (res.data.token) {
+        localStorage.setItem(TOKEN_KEY, res.data.token)
+      }
+      if (res.data.user) {
+        setUser(res.data.user)
+      }
+      return true
+    } catch {
+      setUser(null)
+      localStorage.removeItem(TOKEN_KEY)
+      return false
+    }
+  }, [])
+
   const value = useMemo(
-    () => ({ user, loading, error, login, logout, isAuthenticated: !!user }),
-    [user, loading, error, login, logout]
+    () => ({ user, loading, error, login, logout, refresh, isAuthenticated: !!user }),
+    [user, loading, error, login, logout, refresh]
   )
 
   return (

@@ -14,8 +14,9 @@ function arabicPluralForm(n) {
   return 'other'
 }
 
-// English plural rules: 1=one, everything else=other
+// English plural rules: 0=zero, 1=one, everything else=other
 function englishPluralForm(n) {
+  if (n === 0) return 'zero'
   if (n === 1) return 'one'
   return 'other'
 }
@@ -79,6 +80,10 @@ export function LanguageProvider({ children }) {
 
     if (cur === undefined || typeof cur === 'object') {
       return typeof fallback === 'string' ? fallback : path
+    }
+    // Replace {n} placeholder with the count if provided
+    if (n !== undefined && typeof cur === 'string') {
+      return cur.replace('{n}', String(n))
     }
     return cur
   }, [lang])
