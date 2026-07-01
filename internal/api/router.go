@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
 	"github.com/sambawy01/Retail-Compliance-System/internal/auth"
 	"github.com/sambawy01/Retail-Compliance-System/internal/event"
 	"github.com/sambawy01/Retail-Compliance-System/internal/identity"
@@ -119,7 +120,9 @@ func (s *Server) Router() http.Handler {
 			r.Get("/persons/{personID}", s.getPerson)
 			r.With(s.requireRole("owner", "admin")).Delete("/persons/{personID}", s.revokePerson)
 			r.With(s.requireRole("owner", "admin", "manager")).Post("/persons/{personID}/consent", s.recordConsent)
+			r.Get("/persons/{personID}/consent", s.getPersonConsent)
 			r.With(s.requireRole("owner", "admin", "manager")).Post("/persons/{personID}/templates", s.insertTemplate)
+			r.Get("/persons/{personID}/audit", s.getPersonAudit)
 			r.Post("/match", s.matchFace)
 			r.Get("/audit", s.listAuditLog)
 		})
@@ -579,6 +582,11 @@ func (s *Server) insertDetection(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listClips(w http.ResponseWriter, r *http.Request) {
 	cameraID := r.URL.Query().Get("camera_id")
+	if cameraID == "" {
+		// No camera filter — return empty list (ListClips requires a valid camera_id)
+		writeJSON(w, http.StatusOK, map[string]any{"clips": []any{}})
+		return
+	}
 	clips, err := s.vision.ListClips(r.Context(), cameraID, 100)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list clips")
@@ -685,6 +693,87 @@ func (s *Server) recordConsent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
+}
+
+func (s *Server) getPersonConsent(w http.ResponseWriter, r *http.Request) {
+	personID := chi.URLParam(r, "personID")
+	// Query consent records for this person via TenantTx
+	var consentRecords []map[string]any
+	err := database.TenantTx(r.Context(), s.pool, func(ctx context.Context, tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT consent_id, consent_text, consent_locale, captured_by, captured_at, revoked, revoked_at, lawful_basis
+			FROM identity_consents WHERE person_id = $1 ORDER BY captured_at DESC`, personID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var consentID, consentText, consentLocale, capturedBy, lawfulBasis string
+			var capturedAt time.Time
+			var revoked bool
+			var revokedAt *time.Time
+			if err := rows.Scan(&consentID, &consentText, &consentLocale, &capturedBy, &capturedAt, &revoked, &revokedAt, &lawfulBasis); err != nil {
+				return err
+			}
+			consentRecords = append(consentRecords, map[string]any{
+				"consent_id":      consentID,
+				"consent_text":    consentText,
+				"consent_locale":  consentLocale,
+				"captured_by":     capturedBy,
+				"captured_at":     capturedAt,
+				"revoked":         revoked,
+				"revoked_at":      revokedAt,
+				"lawful_basis":    lawfulBasis,
+			})
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get consent records")
+		return
+	}
+	if consentRecords == nil {
+		consentRecords = []map[string]any{}
+	}
+	writeJSON(w, http.StatusOK, consentRecords)
+}
+
+func (s *Server) getPersonAudit(w http.ResponseWriter, r *http.Request) {
+	personID := chi.URLParam(r, "personID")
+	var auditRecords []map[string]any
+	err := database.TenantTx(r.Context(), s.pool, func(ctx context.Context, tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT audit_id, purpose, triggered_by, accessed_at, camera_id
+			FROM identity_access_audit WHERE person_id = $1 ORDER BY accessed_at DESC LIMIT 100`, personID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var auditID, purpose, triggeredBy string
+			var accessedAt time.Time
+			var cameraID *uuid.UUID
+			if err := rows.Scan(&auditID, &purpose, &triggeredBy, &accessedAt, &cameraID); err != nil {
+				return err
+			}
+			auditRecords = append(auditRecords, map[string]any{
+				"audit_id":     auditID,
+				"purpose":      purpose,
+				"triggered_by": triggeredBy,
+				"accessed_at":  accessedAt,
+				"camera_id":    cameraID,
+			})
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get audit log")
+		return
+	}
+	if auditRecords == nil {
+		auditRecords = []map[string]any{}
+	}
+	writeJSON(w, http.StatusOK, auditRecords)
 }
 
 func (s *Server) insertTemplate(w http.ResponseWriter, r *http.Request) {

@@ -17,9 +17,9 @@ import (
 
 // CreateCameraInput is the payload for creating a camera.
 type CreateCameraInput struct {
-	LocationID uuid.UUID `json:"location_id"`
-	Name       string    `json:"name"`
-	RTSPURL    string    `json:"rtsp_url"`
+	LocationID *uuid.UUID `json:"location_id,omitempty"`
+	Name       string     `json:"name"`
+	RTSPURL    string     `json:"rtsp_url"`
 }
 
 // UpdateCameraInput is the payload for updating a camera. Pointer fields are
