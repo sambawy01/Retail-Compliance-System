@@ -15,7 +15,7 @@ export default function TopBar() {
       try {
         await healthCheck()
         if (active) setHealth('ok')
-      } catch {
+      } catch (e) {
         if (active) setHealth('down')
       }
     }

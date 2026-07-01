@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useLang } from '../contexts/LanguageContext'
 import { apiGet, connectWebSocket } from '../services/api'
+import { reportError } from '../services/errors'
 import { sevColor, severityOf, fmtTime } from '../services/constants'
 import { Activity } from 'lucide-react'
 
@@ -18,7 +19,7 @@ export default function EventFeed({ limit = 20, cameraId }) {
       const data = await apiGet.detections({ camera_id: cameraId, limit })
       const arr = Array.isArray(data) ? data : data.items || data.detections || []
       setEvents(arr.slice(0, limit))
-    } catch { /* ignore — keep last state */ }
+    } catch (e) { reportError(e, 'fetching events') }
   }, [cameraId, limit])
 
   useEffect(() => {
@@ -51,7 +52,9 @@ export default function EventFeed({ limit = 20, cameraId }) {
           setConnecting(false)
           wsRef.current = null
           if (reconnectAttempts.current < 5) {
-            const delay = Math.min(1000 * 2 ** reconnectAttempts.current, 30000)
+            // Add random jitter (0-2s) to prevent thundering herd on reconnection
+            const jitter = Math.random() * 2000
+            const delay = Math.min(1000 * 2 ** reconnectAttempts.current, 30000) + jitter
             reconnectAttempts.current++
             reconnectRef.current = setTimeout(connect, delay)
           } else {

@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState, useMemo } from 'react'
 import { useLang } from '../contexts/LanguageContext'
 import { apiGet } from '../services/api'
+import { reportError } from '../services/errors'
 import { severityOf, sevColor, CRITICAL_TYPES, WARNING_TYPES } from '../services/constants'
 import ComplianceGauge from '../components/ComplianceGauge'
 import EventFeed from '../components/EventFeed'
@@ -60,14 +61,14 @@ export default function Dashboard() {
           const arr = Array.isArray(cams) ? cams : cams.items || []
           setCameras(arr)
         }
-      } catch { /* ignore */ }
+      } catch (e) { reportError(e, 'loading cameras') }
       try {
         const det = await apiGet.detections({ limit: 200 })
         if (active) {
           const arr = Array.isArray(det) ? det : det.items || det.detections || []
           setDetections(arr)
         }
-      } catch { /* ignore */ }
+      } catch (e) { reportError(e, 'loading detections') }
       if (active) setLoading(false)
     }
     load()
