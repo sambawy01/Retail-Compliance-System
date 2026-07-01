@@ -17,7 +17,6 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib" // database/sql driver for pgx
 
-
 	"github.com/sambawy01/Retail-Compliance-System/internal/alerts"
 	"github.com/sambawy01/Retail-Compliance-System/internal/api"
 	"github.com/sambawy01/Retail-Compliance-System/internal/auth"
