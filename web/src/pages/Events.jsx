@@ -3,6 +3,7 @@ import { useLang } from '../contexts/LanguageContext'
 import { apiGet } from '../services/api'
 import { ALL_EVENT_TYPES, severityOf, fmtTime } from '../services/constants'
 import SeverityBadge from '../components/SeverityBadge'
+import EventDetailCard from '../components/EventDetailCard'
 import { Filter, ChevronLeft, ChevronRight, X, ChevronUp, ChevronDown } from 'lucide-react'
 
 const PAGE_SIZE = 20
@@ -167,59 +168,21 @@ export default function Events() {
       {selected && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60" onClick={() => setSelected(null)}>
           <div className="bg-bg-card border border-border rounded-xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-3 border-b border-border sticky top-0 bg-bg-card">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-border sticky top-0 bg-bg-card z-10">
               <h3 className="font-semibold text-text-primary">{t('events.detail')}</h3>
               <button onClick={() => setSelected(null)} className="text-text-muted hover:text-text-primary"><X size={18} /></button>
             </div>
-            <div className="p-5 space-y-4">
-              <div className="space-y-2 text-sm">
-                <Row label={t('events.eventType')} value={t(`eventTypes.${selected.event_type}`, selected.event_type)} />
-                <Row label={t('events.severity')} value={<SeverityBadge severity={severityOf(selected.event_type)} />} />
-                <Row label={t('events.timestamp')} value={fmtTime(selected.timestamp || selected.created_at)} />
-                <Row label={t('events.cameraName')} value={selected.camera_name || selected.camera_id || '—'} />
-                <Row label={t('events.confidence')} value={selected.confidence != null ? `${Math.round(selected.confidence * 100)}%` : '—'} />
-              </div>
-
-              {/* Clip thumbnail */}
-              <div>
-                <div className="text-xs text-text-secondary mb-2">{t('events.clip')}</div>
-                {clipLoading ? (
-                  <div className="aspect-video bg-black/40 rounded-lg flex items-center justify-center text-text-muted text-sm">{t('common.loading')}</div>
-                ) : clip ? (
-                  <div className="aspect-video bg-black rounded-lg overflow-hidden">
-                    {clip.thumbnail_url ? (
-                      <img src={clip.thumbnail_url} alt="clip" className="w-full h-full object-cover" />
-                    ) : clip.url ? (
-                      <video src={clip.url} controls className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-text-muted text-sm">{t('events.noClip')}</div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="aspect-video bg-black/40 rounded-lg flex items-center justify-center text-text-muted text-sm">{t('events.noClip')}</div>
-                )}
-              </div>
-
-              {/* Payload */}
-              <div>
-                <div className="text-xs text-text-secondary mb-2">{t('events.payload')}</div>
-                <pre className="bg-bg border border-border rounded-lg p-3 text-xs text-text-secondary overflow-x-auto max-h-48">
-{JSON.stringify(selected.payload || selected.metadata || selected, null, 2)}
-                </pre>
-              </div>
+            <div className="p-5">
+              <EventDetailCard
+                event={selected}
+                camera={cameras.find((c) => c.id === (selected.camera_id || selected.cameraId))}
+                zone={null}
+                clip={clip}
+              />
             </div>
           </div>
         </div>
       )}
-    </div>
-  )
-}
-
-function Row({ label, value }) {
-  return (
-    <div className="flex justify-between gap-4">
-      <span className="text-text-secondary">{label}</span>
-      <span className="text-text-primary text-end">{value}</span>
     </div>
   )
 }
