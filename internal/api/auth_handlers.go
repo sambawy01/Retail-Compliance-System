@@ -2,16 +2,15 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/sambawy01/Retail-Compliance-System/internal/tenant"
 	"github.com/sambawy01/Retail-Compliance-System/pkg/database"
 	"github.com/jackc/pgx/v5"
-	"context"
 )
 
 func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
