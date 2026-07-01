@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
+	chimw "github.com/go-chi/chi/v5/middleware"
 )
 
 // MaxBodySize limits the size of request bodies to prevent DoS via large payloads.
@@ -185,7 +185,7 @@ func timeNow() int64 {
 // Uses chi's built-in RequestID if available, otherwise generates one.
 func RequestIDInResponse(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rid := chi.RequestIDFromContext(r.Context())
+		rid := chimw.GetReqID(r.Context())
 		if rid != "" {
 			w.Header().Set("X-Request-ID", fmt.Sprintf("%v", rid))
 		}

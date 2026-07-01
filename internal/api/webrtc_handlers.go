@@ -4,10 +4,10 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/sambawy01/Retail-Compliance-System/internal/webrtc"
 )
 
