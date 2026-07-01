@@ -52,7 +52,9 @@ export default function EventFeed({ limit = 20, cameraId }) {
           setConnecting(false)
           wsRef.current = null
           if (reconnectAttempts.current < 5) {
-            const delay = Math.min(1000 * 2 ** reconnectAttempts.current, 30000)
+            // Add random jitter (0-2s) to prevent thundering herd on reconnection
+            const jitter = Math.random() * 2000
+            const delay = Math.min(1000 * 2 ** reconnectAttempts.current, 30000) + jitter
             reconnectAttempts.current++
             reconnectRef.current = setTimeout(connect, delay)
           } else {
