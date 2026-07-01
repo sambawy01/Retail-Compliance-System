@@ -47,12 +47,21 @@ func run() error {
 	slog.SetDefault(logger)
 
 	slog.Info("starting watchdog server", "port", cfg.Port, "env", cfg.Env)
-	slog.Info("connecting to database", "has_url", cfg.DatabaseURL != "")
+
+	// Build the database URL. If DB_PASSWORD is set, we construct the URL
+	// from parts to avoid URL-encoding issues with special characters in
+	// the password (pgx's URL parser can mangle !, @, etc).
+	dbURL := cfg.DatabaseURL
+	if cfg.DBPassword != "" {
+		dbURL = fmt.Sprintf("postgresql://%s:%s@%s:%s/postgres?sslmode=require",
+			cfg.DBUser, cfg.DBPassword, cfg.DBHost, cfg.DBPort)
+	}
+	slog.Info("connecting to database", "host", cfg.DBHost, "port", cfg.DBPort, "user", cfg.DBUser)
 
 	// Create DB pool
 	poolCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	pool, err := database.NewPool(poolCtx, cfg.DatabaseURL)
+	pool, err := database.NewPool(poolCtx, dbURL)
 	if err != nil {
 		return err
 	}

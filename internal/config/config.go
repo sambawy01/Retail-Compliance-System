@@ -9,7 +9,11 @@ import (
 // Config holds all application configuration values.
 type Config struct {
 	Port            string
-	DatabaseURL     string
+	DatabaseURL     string // full connection string
+	DBHost          string // individual DB connection parts (alternative to DatabaseURL)
+	DBPort          string
+	DBUser          string
+	DBPassword      string
 	JWTPrivateKey   string // file path
 	JWTPublicKey    string // file path
 	JWTPrivateKeyB64 string // base64-encoded key content
@@ -30,6 +34,10 @@ func Load() (*Config, error) {
 	c := &Config{
 		Port:             envOr("PORT", envOr("HTTP_PORT", "8080")),
 		DatabaseURL:      os.Getenv("DATABASE_URL"),
+		DBHost:           os.Getenv("DB_HOST"),
+		DBPort:           envOr("DB_PORT", "6543"),
+		DBUser:           envOr("DB_USER", "postgres"),
+		DBPassword:       os.Getenv("DB_PASSWORD"),
 		JWTPrivateKey:    envOr("JWT_PRIVATE_KEY_PATH", ""),
 		JWTPublicKey:     envOr("JWT_PUBLIC_KEY_PATH", ""),
 		JWTPrivateKeyB64: os.Getenv("JWT_PRIVATE_KEY_B64"),
@@ -44,8 +52,8 @@ func Load() (*Config, error) {
 		TelegramBotToken: os.Getenv("TELEGRAM_BOT_TOKEN"),
 		TelegramChatID:   os.Getenv("TELEGRAM_CHAT_ID"),
 	}
-	if c.DatabaseURL == "" {
-		return nil, fmt.Errorf("config: DATABASE_URL is required")
+	if c.DatabaseURL == "" && c.DBPassword == "" {
+		return nil, fmt.Errorf("config: DATABASE_URL or DB_PASSWORD is required")
 	}
 	if c.Env == "production" {
 		if c.JWTPrivateKey == "" && c.JWTPrivateKeyB64 == "" {
